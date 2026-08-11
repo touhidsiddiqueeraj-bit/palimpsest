@@ -11,3 +11,6 @@ target/
 src-tauri/target/
 .vite/
 coverage/
+src-tauri/gen/
+test-results/
+playwright-report/

@@ -14,14 +14,14 @@ Local-first, revision-aware Markdown editor for humans and AI agents. Word-level
 
 ## Repo map
 
-| Path | Contents |
-|------|----------|
-| `apps/desktop/` | Tauri 2 desktop app: React 18 + TypeScript strict + Vite + Tailwind, CodeMirror 6 editor |
-| `packages/core/` | Pure TS engine: markdown renderer, diff engine, history (SQLite), workspace. **Zero DOM imports.** |
-| `packages/ai/` | BYOK provider registry (Vercel AI SDK), task routing, inline edit, chat, cost metering |
-| `packages/mcp/` | MCP server (stdio + HTTP) and MCP client (allowlists, audit log) |
-| `reference/v0-single-file-prototype.html` | The v0 prototype — source of truth for UX touches and the diff algorithm |
-| `docs/adr/` | Architecture Decision Records |
+| Path                                      | Contents                                                                                           |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `apps/desktop/`                           | Tauri 2 desktop app: React 18 + TypeScript strict + Vite + Tailwind, CodeMirror 6 editor           |
+| `packages/core/`                          | Pure TS engine: markdown renderer, diff engine, history (SQLite), workspace. **Zero DOM imports.** |
+| `packages/ai/`                            | BYOK provider registry (Vercel AI SDK), task routing, inline edit, chat, cost metering             |
+| `packages/mcp/`                           | MCP server (stdio + HTTP) and MCP client (allowlists, audit log)                                   |
+| `reference/v0-single-file-prototype.html` | The v0 prototype — source of truth for UX touches and the diff algorithm                           |
+| `docs/adr/`                               | Architecture Decision Records                                                                      |
 
 ## Capability layer pattern (architecture rule)
 

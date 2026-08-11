@@ -21,14 +21,14 @@ libsoup3` equivalents under `webkit2gtk-4.1` names where applicable).
 
 ## Milestone map
 
-| Milestone | Scope |
-|-----------|-------|
-| M0 | Scaffold, CI, repo docs |
-| M1 | `packages/core`: diff engine, markdown engine, history (SQLite), workspace |
-| M2 | Editor parity with v0 prototype on CodeMirror 6 + SQLite |
-| M3 | `packages/ai`: BYOK registry, task routing, inline edit, chat |
-| M4 | `packages/mcp`: server, client, conformance suite |
-| M5 | Modes, export, docs, release automation |
+| Milestone | Scope                                                                      |
+| --------- | -------------------------------------------------------------------------- |
+| M0        | Scaffold, CI, repo docs                                                    |
+| M1        | `packages/core`: diff engine, markdown engine, history (SQLite), workspace |
+| M2        | Editor parity with v0 prototype on CodeMirror 6 + SQLite                   |
+| M3        | `packages/ai`: BYOK registry, task routing, inline edit, chat              |
+| M4        | `packages/mcp`: server, client, conformance suite                          |
+| M5        | Modes, export, docs, release automation                                    |
 
 ## Making a change
 
