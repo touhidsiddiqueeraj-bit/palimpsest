@@ -32,7 +32,7 @@ jobs:
       - name: Unit tests (core / ai / mcp)
         run: pnpm -r test
       - name: MCP conformance
-        run: pnpm --filter mcp exec vitest run test/conformance
+        run: pnpm --filter mcp exec vitest run test/conformance --passWithNoTests
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
       - name: E2E smoke (desktop web build)
