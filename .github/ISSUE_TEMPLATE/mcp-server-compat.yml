@@ -1,0 +1,31 @@
+name: MCP server compatibility
+description: Report a problem connecting Palimpsest (as MCP client) to another MCP server
+labels: [mcp]
+body:
+  - type: input
+    id: server
+    attributes:
+      label: Server name / URL
+      description: Which MCP server failed to connect?
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options: [stdio, streamable HTTP]
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error observed
+      description: Paste the error from Settings → MCP, or the audit log entry.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+    validations:
+      required: true

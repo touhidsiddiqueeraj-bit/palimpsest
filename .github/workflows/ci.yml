@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CI: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Prettier check
+        run: pnpm exec prettier --check .
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests (core / ai / mcp)
+        run: pnpm -r test
+      - name: MCP conformance
+        run: pnpm --filter mcp exec vitest run test/conformance
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+      - name: E2E smoke (desktop web build)
+        run: pnpm --filter desktop exec playwright test
+      - name: Coverage gate (core)
+        run: pnpm --filter core exec vitest run --coverage --coverage.thresholds.lines 90
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install system deps (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            javascriptcoregtk-4.1-dev librsvg2-dev patchelf
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Rust check + clippy + test
+        run: |
+          cargo fmt --check
+          cargo clippy -- -D warnings
+          cargo test
+        working-directory: apps/desktop/src-tauri
+      - name: Build frontend
+        run: pnpm build
+      - name: Tauri build (deb/AppImage)
+        run: pnpm tauri build
+
+  build-sanity:
+    needs: build
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build frontend
+        run: pnpm build
+      - name: Tauri build sanity
+        run: pnpm tauri build
