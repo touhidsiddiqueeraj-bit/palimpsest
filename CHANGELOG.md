@@ -38,3 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-localhost request at the wrapper. No logging.
 - Tauri adapters bridging `packages/core` (SqliteDb, SnapshotFs) to
   `tauri-plugin-sql` / `tauri-plugin-fs`; fs scope is `$HOME/**`.
+- CodeMirror 6 editor (markdown lang, history, Mod-b/i/k shortcuts) with
+  live source + preview split.
+- History drawer: time-scrubber, kind filter chips, milestone rename
+  (double-click, frontmatter-only), gone/changed status chips.
+- Diagram code fences (ditaa, mermaid, …) render to SVG on demand via kroki —
+  requests flow through the netguard so Local-only blocks them visibly.
+- Import/export: regex HTML↔markdown (`Alt+L` export, `Ctrl+Shift+I` import).
