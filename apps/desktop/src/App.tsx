@@ -43,6 +43,11 @@ export default function App() {
   const [prompt, setPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [aiMsg, setAiMsg] = useState<string | null>(null);
+  const [chat, setChat] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const [usage, setUsage] = useState(0);
+  const [tab, setTab] = useState<'edit' | 'chat'>('edit');
   const previewRef = useRef<HTMLDivElement>(null);
   const snapshotTimer = useRef<number | null>(null);
   const lastLen = useRef(INITIAL.length);
@@ -150,6 +155,40 @@ export default function App() {
       await refreshSnaps(docId);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onSend = async () => {
+    if (!store || docId === null || !chatInput.trim() || chatBusy) return;
+    const q = chatInput.trim();
+    setChatInput('');
+    setChatBusy(true);
+    setChat((c) => [...c, { role: 'user', content: q }]);
+    try {
+      const client = createClient(provider, { localOnly: localOnlyRef.current });
+      const bundle = await store.recall(q, 4096, { scope: [String(docId)] });
+      const budgeted = bundle.results
+        .map(
+          (h) =>
+            `[${h.status} · ${h.kind === 'history' ? 'history' : 'doc'}] ${h.text.slice(0, 400)}`,
+        )
+        .join('\n');
+      const sys = [
+        'You are an assistant inside Palimpsest, a revision-aware Markdown editor.',
+        'Below are recalled memory snippets from the document history',
+        '(status: current / modified / deleted). Answer using them when relevant.',
+        'Be concise. Never claim to have changed anything.',
+      ].join(' ');
+      const answer = await client.complete([
+        { role: 'system', content: sys },
+        { role: 'user', content: `Memory:\n${budgeted}\n\nQuestion: ${q}` },
+      ]);
+      setChat((c) => [...c, { role: 'assistant', content: answer }]);
+      setUsage((u) => u + q.length + answer.length);
+    } catch (e) {
+      setChat((c) => [...c, { role: 'assistant', content: `Error: ${String(e)}` }]);
+    } finally {
+      setChatBusy(false);
     }
   };
 
@@ -364,41 +403,96 @@ export default function App() {
             ))}
           </ul>
           <div className="mt-4 border-t border-stone-200 pt-3">
-            <h2 className="mb-1 font-semibold">Ask AI</h2>
-            <textarea
-              className="w-full resize-none rounded border border-stone-300 p-2 text-xs outline-none focus:border-stone-500"
-              rows={3}
-              placeholder={`Ollama · ${provider.model} — edit instruction`}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-            />
-            <div className="mt-1 flex gap-2">
-              <button
-                className="rounded bg-stone-900 px-2 py-1 text-xs text-white hover:bg-stone-700 disabled:opacity-50"
-                onClick={() => void onPropose()}
-                disabled={aiBusy || !prompt.trim()}
-              >
-                {aiBusy ? 'Proposing…' : localOnly ? 'Propose (local)' : 'Propose'}
-              </button>
-              {proposal && (
-                <>
-                  <button
-                    className="rounded bg-emerald-700 px-2 py-1 text-xs text-white hover:bg-emerald-600"
-                    onClick={() => void onAccept()}
-                    disabled={busy}
-                  >
-                    Accept +{proposal.added} −{proposal.removed}
-                  </button>
-                  <button
-                    className="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
-                    onClick={() => setProposal(null)}
-                  >
-                    Reject
-                  </button>
-                </>
-              )}
+            <div className="mb-2 flex gap-1">
+              {(['edit', 'chat'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`rounded px-2 py-0.5 text-xs ${tab === t ? 'bg-stone-300' : 'bg-stone-100 hover:bg-stone-200'}`}
+                >
+                  {t === 'edit' ? 'Edit' : 'Chat'}
+                </button>
+              ))}
             </div>
-            {aiMsg && <div className="mt-1 text-xs text-red-600">{aiMsg}</div>}
+            {tab === 'edit' ? (
+              <>
+                <h2 className="mb-1 font-semibold">Ask AI</h2>
+                <textarea
+                  className="w-full resize-none rounded border border-stone-300 p-2 text-xs outline-none focus:border-stone-500"
+                  rows={3}
+                  placeholder={`Ollama · ${provider.model} — edit instruction`}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                />
+                <div className="mt-1 flex gap-2">
+                  <button
+                    className="rounded bg-stone-900 px-2 py-1 text-xs text-white hover:bg-stone-700 disabled:opacity-50"
+                    onClick={() => void onPropose()}
+                    disabled={aiBusy || !prompt.trim()}
+                  >
+                    {aiBusy ? 'Proposing…' : localOnly ? 'Propose (local)' : 'Propose'}
+                  </button>
+                  {proposal && (
+                    <>
+                      <button
+                        className="rounded bg-emerald-700 px-2 py-1 text-xs text-white hover:bg-emerald-600"
+                        onClick={() => void onAccept()}
+                        disabled={busy}
+                      >
+                        Accept +{proposal.added} −{proposal.removed}
+                      </button>
+                      <button
+                        className="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+                        onClick={() => setProposal(null)}
+                      >
+                        Reject
+                      </button>
+                    </>
+                  )}
+                </div>
+                {aiMsg && <div className="mt-1 text-xs text-red-600">{aiMsg}</div>}
+              </>
+            ) : (
+              <>
+                <div className="max-h-64 overflow-y-auto rounded border border-stone-200 p-2 text-xs">
+                  {chat.length === 0 && (
+                    <div className="text-stone-400">
+                      Ask about this document — answers get recalled history context.
+                    </div>
+                  )}
+                  {chat.map((m, i) => (
+                    <div
+                      key={i}
+                      className={`mb-1 ${m.role === 'user' ? 'text-stone-800' : 'text-stone-600'}`}
+                    >
+                      <span className="font-semibold">{m.role === 'user' ? 'You' : 'AI'}:</span>{' '}
+                      <span className="whitespace-pre-wrap">{m.content}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-1 flex gap-1">
+                  <input
+                    className="flex-1 rounded border border-stone-300 px-2 py-1 text-xs outline-none focus:border-stone-500"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && void onSend()}
+                    placeholder={`Ask Ollama · ${provider.model}`}
+                  />
+                  <button
+                    className="rounded bg-stone-900 px-2 py-1 text-xs text-white hover:bg-stone-700 disabled:opacity-50"
+                    onClick={() => void onSend()}
+                    disabled={chatBusy || !chatInput.trim()}
+                  >
+                    Send
+                  </button>
+                </div>
+                {usage > 0 && (
+                  <div className="mt-1 text-[10px] text-stone-400">
+                    {usage.toLocaleString()} chars exchanged this session
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </aside>
         <main className="flex flex-1 flex-col">
