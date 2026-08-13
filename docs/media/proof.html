@@ -1,24 +1,76 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Palimpsest MCP — live verification transcript</title>
-<style>
-  body { margin: 0; background: #140f0a; color: #d8d2c4; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 28px 34px; }
-  h1 { color: #f2c96b; font-size: 17px; margin: 0 0 4px; }
-  .sub { color: #8a8072; margin-bottom: 18px; }
-  .panel { border: 1px solid #2e2li7725; border-color: #2e2720; border-radius: 10px; margin-bottom: 22px; overflow: hidden; }
-  .bar { background: #241c14; padding: 7px 12px; color: #b7ab97; font-weight: bold; font-size: 12px; }
-  pre { margin: 0; padding: 14px 16px; white-space: pre-wrap; word-break: break-word; }
-  .g { color: #7fc97f; } .y { color: #f2c96b; } .c { color: #8a8072; } .w { color: #e8e2d4; }
-</style>
-</head>
-<body>
-<h1>Palimpsest MCP server — verified end-to-end (stdio + Streamable HTTP + inside opencode)</h1>
-<div class="sub">Captured 2026-08-13, against this repository's own files (PLAN.md, CHANGELOG.md). No fixtures.</div>
+  <head>
+    <meta charset="utf-8" />
+    <title>Palimpsest MCP — live verification transcript</title>
+    <style>
+      body {
+        margin: 0;
+        background: #140f0a;
+        color: #d8d2c4;
+        font:
+          13px/1.55 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+        padding: 28px 34px;
+      }
+      h1 {
+        color: #f2c96b;
+        font-size: 17px;
+        margin: 0 0 4px;
+      }
+      .sub {
+        color: #8a8072;
+        margin-bottom: 18px;
+      }
+      .panel {
+        border: 1px solid #2e2li7725;
+        border-color: #2e2720;
+        border-radius: 10px;
+        margin-bottom: 22px;
+        overflow: hidden;
+      }
+      .bar {
+        background: #241c14;
+        padding: 7px 12px;
+        color: #b7ab97;
+        font-weight: bold;
+        font-size: 12px;
+      }
+      pre {
+        margin: 0;
+        padding: 14px 16px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .g {
+        color: #7fc97f;
+      }
+      .y {
+        color: #f2c96b;
+      }
+      .c {
+        color: #8a8072;
+      }
+      .w {
+        color: #e8e2d4;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Palimpsest MCP server — verified end-to-end (stdio + Streamable HTTP + inside opencode)</h1>
+    <div class="sub">
+      Captured 2026-08-13, against this repository's own files (PLAN.md, CHANGELOG.md). No fixtures.
+    </div>
 
-<div class="panel"><div class="bar">1 · opencode session — MCP tools called directly in a running opencode instance (palimpsest server registered via ~/.config/opencode/opencode.json, dist/cli.cjs, stdio)</div>
-<pre><span class="c">$</span> <span class="w">palimpsest_get_stats(doc: "PLAN.md")</span>
+    <div class="panel">
+      <div class="bar">
+        1 · opencode session — MCP tools called directly in a running opencode instance (palimpsest
+        server registered via ~/.config/opencode/opencode.json, dist/cli.cjs, stdio)
+      </div>
+      <pre><span class="c">$</span> <span class="w">palimpsest_get_stats(doc: "PLAN.md")</span>
 <span class="g">✓</span> { "document": "PLAN.md", "words": 1067, "chars": 7203, "snapshots": 1, "tokens_used": 1801 }
 
 <span class="c">$</span> <span class="w">palimpsest_get_outline(doc: "PLAN.md")</span>
@@ -27,10 +79,15 @@
 <span class="c">$</span> <span class="w">palimpsest_recall(query: "history drawer diff", token_budget: 200)</span>
 <span class="g">✓</span> 1 result, status "current", doc CHANGELOG.md —
     snippet: "…single-file-prototype.html` as the source of truth for the <span class="y">[diff]</span> algorithm…"
-    FTS hit on the repository's own changelog, seeded into the index by the server's bootstrap.</pre></div>
+    FTS hit on the repository's own changelog, seeded into the index by the server's bootstrap.</pre>
+    </div>
 
-<div class="panel"><div class="bar">2 · Streamable HTTP transport — raw fetch() requests, same session, sequential ids (server: node dist/cli.cjs --workspace &lt;repo&gt; --port)</div>
-<pre><span class="c">$</span> <span class="w">POST / {"id":100,"method":"tools/call","params":{"name":"get_stats","arguments":{"doc":"PLAN.md"}}}</span>
+    <div class="panel">
+      <div class="bar">
+        2 · Streamable HTTP transport — raw fetch() requests, same session, sequential ids (server:
+        node dist/cli.cjs --workspace &lt;repo&gt; --port)
+      </div>
+      <pre><span class="c">$</span> <span class="w">POST / {"id":100,"method":"tools/call","params":{"name":"get_stats","arguments":{"doc":"PLAN.md"}}}</span>
 <span class="g">✓</span> 200  event: message
     data: {"result":{"content":[{"type":"text","text":"{\n  \"document\": \"PLAN.md\",\n  \"words\": 1067, …"}]}}
 
@@ -38,10 +95,15 @@
 <span class="g">✓</span> 200  recall hits: 1 | statuses: current (from CHANGELOG.md)
 
 <span class="c">$</span> <span class="w">POST / {"id":300,"method":"tools/call","params":{"name":"get_outline","arguments":{"doc":"CHANGELOG.md"}}}</span>
-<span class="g">✓</span> 1:Changelog | 2:[Unreleased] | 3:Added   ← real headings of this repo's changelog</pre></div>
+<span class="g">✓</span> 1:Changelog | 2:[Unreleased] | 3:Added   ← real headings of this repo's changelog</pre>
+    </div>
 
-<div class="panel"><div class="bar">3 · stdio transport smoke script (packages/mcp/smoke.mjs → bundled dist/cli.cjs spawn) — 8/8 PASS</div>
-<pre><span class="g">PASS</span> get_stats             {"document":"notes.md","words":9,"chars":52,"snapshots":3,"tokens_used":13}
+    <div class="panel">
+      <div class="bar">
+        3 · stdio transport smoke script (packages/mcp/smoke.mjs → bundled dist/cli.cjs spawn) — 8/8
+        PASS
+      </div>
+      <pre><span class="g">PASS</span> get_stats             {"document":"notes.md","words":9,"chars":52,"snapshots":3,"tokens_used":13}
 <span class="g">PASS</span> get_document          {"text":"# Alpha\n\nFirst notes for the palimpsest round trip.\n","tokens_used":13}
 <span class="g">PASS</span> get_outline           {"doc":"docs/one.md","outline":[{"level":1,"text":"Beta"}],"tokens_used":11}
 <span class="g">PASS</span> recall                status "current" · snippet "…First notes for the <span class="y">[palimpsest]</span> round trip…"
@@ -49,12 +111,17 @@
 <span class="g">PASS</span> milestone real        {"snapshot_id":1786619923052,"tokens_used":13}
 <span class="g">PASS</span> restore dry_run       {"dry_run":true,"diff":{"added":0,"removed":0},"tokens_used":26}
 <span class="g">PASS</span> apply_edit guards     apply_edit: no AI provider configured   ← no silent AI writes, by design
-<span class="y">SMOKE OK</span></pre></div>
+<span class="y">SMOKE OK</span></pre>
+    </div>
 
-<div class="panel"><div class="bar">4 · CI (GitHub Actions, workflows/ci.yml) — gate results at head of this documentation</div>
-<pre><span class="g">✓</span> test        (lint → typecheck → unit tests core 43 · ai 9 · mcp 10 → MCP conformance → Playwright e2e)
+    <div class="panel">
+      <div class="bar">
+        4 · CI (GitHub Actions, workflows/ci.yml) — gate results at head of this documentation
+      </div>
+      <pre><span class="g">✓</span> test        (lint → typecheck → unit tests core 43 · ai 9 · mcp 10 → MCP conformance → Playwright e2e)
 <span class="g">✓</span> build-sanity (skipped, desktop-only)
 <span class="y">◌</span> build       Tauri packaging (Linux deb/AppImage)
-<span class="c">·</span> CodeQL      "code scanning is not enabled for this repository" — repo setting, not a code issue</pre></div>
-</body>
+<span class="c">·</span> CodeQL      "code scanning is not enabled for this repository" — repo setting, not a code issue</pre>
+    </div>
+  </body>
 </html>
