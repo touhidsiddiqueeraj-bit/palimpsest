@@ -73,7 +73,7 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const workspace = await join(await appDataDir(), '.palimpsest-demo');
+        const workspace = await join(await appDataDir(), 'palimpsest-demo');
         const fs = snapshotFs(workspace);
         await mkdir(workspace, { recursive: true });
         const db = await sqliteDb(`${workspace}/index.db`);

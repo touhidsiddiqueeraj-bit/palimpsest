@@ -16,8 +16,6 @@
     "fs:allow-read-dir",
     "fs:allow-mkdir",
     { "identifier": "fs:scope", "allow": [
-      { "path": "$HOME/**" },
-      { "path": "$LOCALDATA/**" },
       { "path": "$APPDATA/**" },
       { "path": "$APPCONFIG/**" }
     ] },
