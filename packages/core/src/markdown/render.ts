@@ -49,21 +49,21 @@ interface InlineCtx {
 function inline(text: string, ctx: InlineCtx): string {
   let s = esc(text);
   const codes: string[] = [];
-  s = s.replace(/`([^`\n]+)`/g, (m, c) => {
+  s = s.replace(/`([^`\n]+)`/g, (_m, c) => {
     codes.push(String(c));
     return '\uE000' + (codes.length - 1) + '\uE000';
   });
-  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (m, alt, url) => {
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (_m, alt, url) => {
     const href = String(url).replace(/&amp;/g, '&');
     if (!safeHref(href)) return esc(alt);
     return '<img src="' + esc(href) + '" alt="' + esc(alt) + '" loading="lazy">';
   });
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (m, txt, url) => {
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (_m, txt, url) => {
     const href = String(url).replace(/&amp;/g, '&');
     if (!safeHref(href)) return esc(txt);
     return '<a href="' + esc(href) + '" target="_blank" rel="noopener">' + txt + '</a>';
   });
-  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (m, target, alias) => {
+  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, target, alias) => {
     const t = String(target).trim();
     const label = alias ? String(alias) : t;
     const href = ctx.resolver ? ctx.resolver(t) : null;
@@ -72,7 +72,7 @@ function inline(text: string, ctx: InlineCtx): string {
     }
     return '<a href="' + esc(href) + '" class="wikilink">' + esc(label) + '</a>';
   });
-  s = s.replace(/\[\^([^\]]+)\]/g, (m, id) => {
+  s = s.replace(/\[\^([^\]]+)\]/g, (_m, id) => {
     const n = ctx.footnotes.indexOf(String(id));
     if (n === -1) {
       ctx.footnotes.push(String(id));
@@ -102,7 +102,7 @@ function inline(text: string, ctx: InlineCtx): string {
   s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
   s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
   s = s.replace(/==([^=]+)==/g, '<mark>$1</mark>');
-  s = s.replace(/\uE000(\d+)\uE000/g, (m, n) => '<code>' + codes[+n] + '</code>');
+  s = s.replace(/\uE000(\d+)\uE000/g, (_m, n) => '<code>' + codes[+n] + '</code>');
   return s;
 }
 

@@ -36,6 +36,8 @@ export interface SnapshotInfo {
   words: number;
   ts: number;
   archived: boolean;
+  /** present on list results: relation of this snapshot's text to the current text */
+  status?: SnapshotStatus;
 }
 
 export interface DocumentInfo {

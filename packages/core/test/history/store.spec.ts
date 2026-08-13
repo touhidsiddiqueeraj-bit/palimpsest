@@ -199,6 +199,34 @@ describe('file-backed history store', () => {
     expect(second.docs).toBe(first.docs);
   });
 
+  it('renames a milestone label in place', async () => {
+    const { doc } = await setup();
+    const m = await store.capture(doc.id, 'Milestone text.', 'milestone', 'Old name');
+    await store.renameSnapshot(doc.id, m.id, 'New name');
+    const list = await store.list(doc.id);
+    expect(list.find((s) => s.id === m.id)!.label).toBe('New name');
+    const raw = await readFile(
+      join(root, '.palimpsest', 'snapshots', `${m.id}-milestone.md`),
+      'utf8',
+    );
+    expect(raw).toContain('label: "New name"');
+    expect(raw).toContain('Milestone text.');
+  });
+
+  it('list marks snapshots current/modified/deleted vs the current text', async () => {
+    const doc = await store.getOrCreateDoc('status.md');
+    const a = await store.capture(doc.id, 'The quick brown fox.', 'auto', 'a');
+    const b = await store.capture(doc.id, 'The lazy dog sleeps.', 'auto', 'b');
+    const c = await store.capture(doc.id, 'A totally different topic.', 'milestone', 'c');
+    const statuses = new Map((await store.list(doc.id)).map((s) => [s.id, s.status]));
+    expect(statuses.get(a.id)).toBe('deleted');
+    expect(statuses.get(b.id)).toBe('deleted');
+    expect(statuses.get(c.id)).toBe('current');
+    await store.capture(doc.id, 'The quick brown fox.', 'milestone', 'a again');
+    const after = new Map((await store.list(doc.id)).map((s) => [s.id, s.status]));
+    expect(after.get(a.id)).toBe('current');
+  });
+
   it('reports stats and snapshot counts', async () => {
     const { doc } = await setup();
     const s = await store.stats(doc.id, 'The lazy dog sleeps all day.');

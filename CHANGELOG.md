@@ -28,3 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retired auto/system snapshots to `.palimpsest/archive/`
 - Context-budget-aware `recall(query, budget)` returning ranked memory bundles
   (current/deleted/modified status); FTS search with `include_deleted`.
+- Snapshot list rows expose `status` (current/modified/deleted vs current text);
+  milestone labels are renameable via `renameSnapshot` without touching the
+  document text.
+- Desktop history drawer (M2): time-scrubber over snapshots with preview +
+  one-click restore; per-snapshot changed/gone indicators.
+- Network transparency layer: outbound requests — fetch/XHR/WebSocket — light a
+  status indicator with destination host; hard "Local-only" toggle blocks every
+  non-localhost request at the wrapper. No logging.
+- Tauri adapters bridging `packages/core` (SqliteDb, SnapshotFs) to
+  `tauri-plugin-sql` / `tauri-plugin-fs`; fs scope is `$HOME/**`.

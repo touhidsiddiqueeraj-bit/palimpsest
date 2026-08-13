@@ -243,15 +243,26 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
     limit = 300,
   ): Promise<SnapshotInfo[]> {
     const archived = which === 'archive' ? '= 1' : which === 'snapshots' ? '= 0' : 'IN (0,1)';
-    const rows = await db.select<SnapshotInfo & { meta: string }>(
-      `SELECT id, doc_id AS docId, kind, label, meta, words, ts, archived FROM snapshots
-       WHERE doc_id = ? AND archived ${archived} ORDER BY ts DESC, id DESC LIMIT ?`,
+    const rows = await db.select<SnapshotInfo & { meta: string; text: string; current: string }>(
+      `SELECT s.id, s.doc_id AS docId, s.kind, s.label, s.meta, s.words, s.ts, s.archived,
+              h.text AS text, d.text AS current
+       FROM snapshots s
+       JOIN history_fts h ON h.rowid = s.id
+       JOIN documents d ON d.id = s.doc_id
+       WHERE s.doc_id = ? AND s.archived ${archived} ORDER BY s.ts DESC, s.id DESC LIMIT ?`,
       [docId, limit],
     );
     return rows.map((r) => ({
-      ...r,
-      archived: Boolean(r.archived),
+      id: r.id,
+      docId: r.docId,
+      kind: r.kind,
+      label: r.label,
       meta: JSON.parse(r.meta || '{}') as SnapshotMeta,
+      words: r.words,
+      ts: r.ts,
+      archived: Boolean(r.archived),
+      status:
+        r.text === r.current ? 'current' : overlap(r.text, r.current) > 0 ? 'modified' : 'deleted',
     }));
   }
 
@@ -306,6 +317,22 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
       label || `Restored · ${snap.label || snap.kind}`,
     );
     return { text: snap.text, beforeId: before.id, afterId: after.id };
+  }
+
+  /** Rename a milestone: updates the label in the snapshot file and the index.
+   * The document text itself is never modified — only the frontmatter label. */
+  async function renameSnapshot(docId: number, snapshotId: number, label: string): Promise<void> {
+    const rows = await db.select<{ file: string; archived: boolean; text: string }>(
+      `SELECT s.file AS file, s.archived AS archived, h.text AS text
+       FROM snapshots s JOIN history_fts h ON h.rowid = s.id WHERE s.doc_id = ? AND s.id = ?`,
+      [docId, snapshotId],
+    );
+    const r = rows[0];
+    if (!r) throw new Error(`snapshot ${snapshotId} not found for doc ${docId}`);
+    const content = await fs.read(r.file, Boolean(r.archived));
+    const { fm, text } = parseSnapshotFile(content);
+    await fs.write(r.file, encodeSnapshotFile({ ...fm, label }, text));
+    await db.execute('UPDATE snapshots SET label = ? WHERE id = ?', [label, snapshotId]);
   }
 
   /** FTS across documents and history; fallback to LIKE on query errors. */
@@ -481,12 +508,12 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
     return { results: packed, tokensUsed: Math.min(tokensUsed, tokenBudget), truncated };
   }
 
-  const statusOf = (docId: number, currentText: string, snapshotText: string): SnapshotStatus => {
+  const statusOf = (_docId: number, currentText: string, snapshotText: string): SnapshotStatus => {
     if (snapshotText === currentText) return 'current';
     return overlap(snapshotText, currentText) > 0 ? 'modified' : 'deleted';
   };
 
-  async function snapshotText(docId: number, snapshotId: number): Promise<string> {
+  async function snapshotText(_docId: number, snapshotId: number): Promise<string> {
     const rows = await db.select<{ text: string }>('SELECT text FROM history_fts WHERE rowid = ?', [
       snapshotId,
     ]);
@@ -561,6 +588,7 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
     get,
     diff,
     restore,
+    renameSnapshot,
     search,
     recall,
     prune,
