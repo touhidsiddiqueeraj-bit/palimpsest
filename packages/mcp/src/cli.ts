@@ -1,0 +1,155 @@
+#!/usr/bin/env node
+/**
+ * Palimpsest MCP server CLI — runs the capability-layer server against a real
+ * markdown workspace (default: cwd) and serves it over stdio or HTTP.
+ *
+ *   node dist/cli.mjs [--workspace <dir>] [--port <n>]
+ *
+ * Env (all optional):
+ *   PALIMPSEST_PROVIDER_URL  provider base URL -> makes apply_edit usable
+ *   PALIMPSEST_MODEL         model id (default: provider default)
+ *   PALIMPSEST_LOCAL_ONLY    '0' disables the local-only AI gate (default on)
+ */
+import { DatabaseSync } from 'node:sqlite';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { join, relative, resolve, dirname } from 'node:path';
+import { createHistoryStore, type SqliteDb, type SnapshotFs } from '@palimpsest/core';
+import { createClient, isLocalUrl, type AiClient } from '@palimpsest/ai';
+import { runStdioServer, runHttpServer, type McpContext } from './index.js';
+
+const SKIP_DIRS = new Set([
+  '.git',
+  '.palimpsest',
+  'node_modules',
+  'dist',
+  'out',
+  'target',
+  'coverage',
+  'test-results',
+  'playwright-report',
+]);
+
+function nodeDb(dbPath: string): SqliteDb {
+  const raw = new DatabaseSync(dbPath);
+  raw.exec('PRAGMA journal_mode = WAL;');
+  return {
+    async select<T = Record<string, unknown>>(sql: string, params: unknown[] = []) {
+      return raw.prepare(sql).all(...(params as never[])) as T[];
+    },
+    async execute(sql: string, params: unknown[] = []) {
+      const r = raw.prepare(sql).run(...(params as never[]));
+      return { lastInsertId: Number(r.lastInsertRowid), changes: Number(r.changes) };
+    },
+  };
+}
+
+function nodeSnapshotFs(snapDir: string): SnapshotFs {
+  const archDir = join(snapDir, 'archive');
+  return {
+    async list() {
+      const live = (await safeReaddir(snapDir)).map((name) => ({ name, archived: false }));
+      const archived = (await safeReaddir(archDir)).map((name) => ({ name, archived: true }));
+      return [...live, ...archived];
+    },
+    async read(name: string, archived: boolean) {
+      return readFile(join(archived ? archDir : snapDir, name), 'utf8');
+    },
+    async write(name: string, text: string) {
+      const target = join(snapDir, name);
+      const tmp = target + '.tmp';
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(tmp, text);
+      await rename(tmp, target);
+    },
+    async moveToArchive(name: string) {
+      await mkdir(archDir, { recursive: true });
+      await rename(join(snapDir, name), join(archDir, name));
+    },
+  };
+}
+
+const safeReaddir = async (dir: string): Promise<string[]> => {
+  try {
+    return await readdir(dir);
+  } catch {
+    return [];
+  }
+};
+
+async function walkMarkdown(dir: string, base: string, out: string[]): Promise<void> {
+  const entries = await safeReaddir(dir);
+  for (const entry of entries) {
+    if (SKIP_DIRS.has(entry) || entry.startsWith('.')) continue;
+    const full = join(dir, entry);
+    const rel = relative(base, full);
+    const mode = (await import('node:fs/promises')).stat(full).then(
+      (s) => s.isDirectory(),
+      () => false,
+    );
+    if (await mode) {
+      await walkMarkdown(full, base, out);
+    } else if (entry.endsWith('.md')) {
+      out.push(rel);
+    }
+  }
+}
+
+/** Register every workspace .md and seed its first snapshot so history tools work from day one. */
+async function bootstrap(store: ReturnType<typeof createHistoryStore>, ws: string): Promise<void> {
+  const docs: string[] = [];
+  await walkMarkdown(ws, ws, docs);
+  for (const name of docs) {
+    const doc = await store.getOrCreateDoc(name, name);
+    const existing = await store.list(doc.id);
+    if (existing.length === 0) {
+      const text = await readFile(join(ws, name), 'utf8');
+      if (text.trim()) await store.capture(doc.id, text, 'auto', 'seed');
+    }
+  }
+}
+
+export async function main(argv: string[]): Promise<void> {
+  const args = new Map<string, string>();
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i]?.startsWith('--')) args.set(argv[i]!.slice(2), argv[i + 1] ?? '');
+  }
+  const ws = resolve(args.get('workspace') ?? process.cwd());
+  const metaDir = join(ws, '.palimpsest');
+  await mkdir(join(metaDir, 'snapshots', 'archive'), { recursive: true });
+
+  const store = createHistoryStore(
+    nodeDb(join(metaDir, 'index.db')),
+    nodeSnapshotFs(join(metaDir, 'snapshots')),
+  );
+  await store.init();
+  await bootstrap(store, ws);
+
+  const providerUrl = process.env.PALIMPSEST_PROVIDER_URL;
+  const ai: AiClient | undefined = providerUrl
+    ? createClient(
+        {
+          id: 'mcp',
+          kind: isLocalUrl(providerUrl) ? 'ollama' : 'openai',
+          baseUrl: providerUrl,
+          model: process.env.PALIMPSEST_MODEL ?? 'default',
+        },
+        { localOnly: process.env.PALIMPSEST_LOCAL_ONLY !== '0' },
+      )
+    : undefined;
+
+  const ctx: McpContext = { store, workspace: ws, ai, localOnly: true };
+
+  const port = Number(args.get('port'));
+  if (Number.isFinite(port) && port > 0) {
+    await runHttpServer(ctx, port);
+    console.error(`palimpsest mcp listening on http://127.0.0.1:${port}`);
+    await new Promise<never>(() => {});
+  } else {
+    await runStdioServer(ctx);
+  }
+}
+
+main(process.argv.slice(2)).catch((err) => {
+  console.error('palimpsest mcp failed:', err);
+  process.exit(1);
+});

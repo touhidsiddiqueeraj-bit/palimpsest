@@ -10,7 +10,8 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "format": "prettier --write .",
-    "tauri": "pnpm --filter desktop tauri"
+    "tauri": "pnpm --filter desktop tauri",
+    "postinstall": "pnpm --filter @palimpsest/mcp build:cli"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -8,16 +8,18 @@ import { TOOLS, type McpContext, type ToolDef } from './tools.js';
 
 /** Minimal JSON-schema -> zod shape converter (all tool params are scalars/arrays today). */
 function jsonSchemaToZodShape(schema: ToolDef['inputSchema']): Record<string, ZodType> {
+  const required = new Set((schema.required as string[] | undefined) ?? []);
   const shape: Record<string, ZodType> = {};
   for (const [name, prop] of Object.entries(schema.properties ?? {})) {
+    const opt = (t: ZodType): ZodType => (required.has(name) ? t : t.optional());
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const p = prop as any;
-    if (p.type === 'string') shape[name] = z.string();
-    else if (p.type === 'number') shape[name] = z.number();
-    else if (p.type === 'boolean') shape[name] = z.boolean();
+    if (p.type === 'string') shape[name] = opt(z.string());
+    else if (p.type === 'number') shape[name] = opt(z.number());
+    else if (p.type === 'boolean') shape[name] = opt(z.boolean());
     else if (p.type === 'array')
-      shape[name] = z.array(p.items?.type === 'number' ? z.number() : z.string());
-    else shape[name] = z.any();
+      shape[name] = opt(z.array(p.items?.type === 'number' ? z.number() : z.string()));
+    else shape[name] = opt(z.any());
   }
   return shape;
 }
