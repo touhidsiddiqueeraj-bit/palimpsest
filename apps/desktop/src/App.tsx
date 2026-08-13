@@ -9,6 +9,7 @@ import {
 } from '@palimpsest/core';
 import { snapshotFs, sqliteDb } from './tauri';
 import { installNetGuard, useLocalOnly, useNetActivity, setLocalOnly } from './netguard';
+import { CodeEditor } from './CodeEditor';
 
 installNetGuard();
 
@@ -204,11 +205,7 @@ export default function App() {
         </aside>
         <main className="flex flex-1 flex-col">
           <div className="flex flex-1 overflow-hidden">
-            <textarea
-              className="w-1/2 resize-none p-4 font-mono text-sm outline-none"
-              value={text}
-              onChange={(e) => onEdit(e.target.value)}
-            />
+            <CodeEditor value={text} onChange={onEdit} />
             <div className="w-1/2 overflow-y-auto border-l border-stone-200 p-4 text-sm">
               <div dangerouslySetInnerHTML={{ __html: renderMarkdown(preview ?? text).html }} />
               {preview !== null && (
