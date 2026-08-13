@@ -69,8 +69,8 @@ Repo, workspace, Tauri boot, CI, gates. Commits: scaffold, prototype relocation,
 
 ### M4 — MCP spine (agents reach every core action)
 
-- [ ] MCP server (stdio + HTTP): `recall` (headline, budget-bounded), `get_outline`, `apply_edit` (+ dry_run), `create_milestone`, `restore_version` (+ dry_run), `export` (+ dry_run), `get_stats`, `get_document`; **every response includes `tokens_used`**; every mutating tool supports `dry_run`
-- [ ] MCP client (allowlists, audit log) for app-side assistant
+- [x] MCP server (stdio + HTTP): `recall` (headline, budget-bounded), `get_outline`, `apply_edit` (+ dry_run), `create_milestone`, `restore_version` (+ dry_run), `export` (+ dry_run), `get_stats`, `get_document`; **every response includes `tokens_used`**; every mutating tool supports `dry_run`
+- [x] MCP client (allowlists, audit log) for app-side assistant
 - [ ] Conformance suite (replaces CI placeholder): include deleted-text recall + tokens_used assertions
 - Acceptance: agent can do everything a human can (parity); conformance suite green; recall with `token_budget` never exceeds it and marks `truncated`
 

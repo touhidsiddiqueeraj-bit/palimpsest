@@ -60,3 +60,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   response carries `tokens_used`; every mutator accepts `dry_run`. stdio
   transport via `createMcpServer()` / `runStdioServer()`.
 - Conformance suite (vitest 4): 7 tests green in CI gate.
+- MCP client: per-tool allowlists + write-through audit log (denied calls are
+  recorded too); durable file sink via `PALIMPSEST_AUDIT`.
