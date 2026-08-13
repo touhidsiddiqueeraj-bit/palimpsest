@@ -15,7 +15,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@palimpsest/ai": "workspace:*",
-    "@palimpsest/core": "workspace:*"
+    "@palimpsest/core": "workspace:*",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

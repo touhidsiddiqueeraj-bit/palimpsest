@@ -204,6 +204,33 @@ describe('conformance (MCP server tools)', () => {
     expect(snaps.some((s) => s.label === 'probe')).toBe(true);
   });
 
+  it('http transport serves the same tool surface', async () => {
+    const { runHttpServer } = await import('../../src/index.js');
+    const server = await runHttpServer(ctx, 0);
+    const res = await fetch('http://127.0.0.1:' + (server.address() as { port: number }).port, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {},
+      }),
+    });
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    const dataLine = raw
+      .split('\n')
+      .find((l) => l.startsWith('data: '))!
+      .slice(6);
+    const body = JSON.parse(dataLine) as { result: { tools: Array<{ name: string }> } };
+    expect(body.result.tools.map((t) => t.name)).toEqual(TOOLS.map((t) => t.name));
+    server.close();
+  });
+
   it('get_outline derives headings from the markdown AST', async () => {
     const r = (await call('get_outline', { doc: 'notes.md' })) as {
       outline: Array<{ level: number; text: string }>;
