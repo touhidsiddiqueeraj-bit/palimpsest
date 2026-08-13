@@ -15,7 +15,10 @@ describe('golden: rewrap tolerance', () => {
 
   it('a multi-paragraph doc rewrapped reports zero churn', () => {
     const a = `${PARA_A}\n\n${PARA_B}\n\nA third paragraph stays untouched.`;
-    const b = a.split('\n\n').map((p) => p.replace(/\s+/g, '\n')).join('\n\n');
+    const b = a
+      .split('\n\n')
+      .map((p) => p.replace(/\s+/g, '\n'))
+      .join('\n\n');
     const r = diffProse(a, b);
     expect(r.added).toBe(0);
     expect(r.removed).toBe(0);

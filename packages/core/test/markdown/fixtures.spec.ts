@@ -34,9 +34,7 @@ describe('markdown: blocks', () => {
   });
 
   it('callouts for known kinds, plain quote otherwise', () => {
-    expect(render('> [!note]\n> Save your work.')).toContain(
-      '<div class="callout callout-note">',
-    );
+    expect(render('> [!note]\n> Save your work.')).toContain('<div class="callout callout-note">');
     expect(render('> [!WARNING]\n> Careful.')).toContain('class="callout callout-warning"');
     expect(render('> [!bogus]\n> Still a quote.')).toContain('<blockquote>');
   });

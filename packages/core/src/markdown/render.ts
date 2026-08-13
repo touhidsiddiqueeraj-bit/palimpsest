@@ -51,7 +51,7 @@ function inline(text: string, ctx: InlineCtx): string {
   const codes: string[] = [];
   s = s.replace(/`([^`\n]+)`/g, (m, c) => {
     codes.push(String(c));
-    return '\u0001' + (codes.length - 1) + '\u0001';
+    return '\uE000' + (codes.length - 1) + '\uE000';
   });
   s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (m, alt, url) => {
     const href = String(url).replace(/&amp;/g, '&');
@@ -76,17 +76,33 @@ function inline(text: string, ctx: InlineCtx): string {
     const n = ctx.footnotes.indexOf(String(id));
     if (n === -1) {
       ctx.footnotes.push(String(id));
-      return '<sup class="footnote-ref"><a href="#fn-' + (ctx.footnotes.length) + '" id="fnref-' + (ctx.footnotes.length) + '">' + (ctx.footnotes.length) + '</a></sup>';
+      return (
+        '<sup class="footnote-ref"><a href="#fn-' +
+        ctx.footnotes.length +
+        '" id="fnref-' +
+        ctx.footnotes.length +
+        '">' +
+        ctx.footnotes.length +
+        '</a></sup>'
+      );
     }
     const num = n + 1;
-    return '<sup class="footnote-ref"><a href="#fn-' + num + '" id="fnref-' + num + '">' + num + '</a></sup>';
+    return (
+      '<sup class="footnote-ref"><a href="#fn-' +
+      num +
+      '" id="fnref-' +
+      num +
+      '">' +
+      num +
+      '</a></sup>'
+    );
   });
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
   s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
   s = s.replace(/==([^=]+)==/g, '<mark>$1</mark>');
-  s = s.replace(/\u0001(\d+)\u0001/g, (m, n) => '<code>' + codes[+n] + '</code>');
+  s = s.replace(/\uE000(\d+)\uE000/g, (m, n) => '<code>' + codes[+n] + '</code>');
   return s;
 }
 
@@ -119,9 +135,15 @@ function parseTable(lines: string[], i: number, ctx: InlineCtx, ast: AstBlock[])
     j++;
   }
   const al = (k: number) => (aligns[k] ? ' style="text-align:' + aligns[k] + '"' : '');
-  let html = '<table><thead><tr>' + header.map((h, k) => '<th' + al(k) + '>' + inline(h, ctx) + '</th>').join('') + '</tr></thead><tbody>';
+  let html =
+    '<table><thead><tr>' +
+    header.map((h, k) => '<th' + al(k) + '>' + inline(h, ctx) + '</th>').join('') +
+    '</tr></thead><tbody>';
   for (const r of rows) {
-    html += '<tr>' + header.map((_, k) => '<td' + al(k) + '>' + inline(r[k] || '', ctx) + '</td>').join('') + '</tr>';
+    html +=
+      '<tr>' +
+      header.map((_, k) => '<td' + al(k) + '>' + inline(r[k] || '', ctx) + '</td>').join('') +
+      '</tr>';
   }
   html += '</tbody></table>';
   ast.push({ type: 'table', headers: header, rows });
@@ -156,17 +178,22 @@ function renderListNode(n: ListNode): string {
   if (!n.items.length) return '';
   const tag = n.type === 'ol' ? 'ol' : 'ul';
   return (
-    '<' + tag + '>' +
+    '<' +
+    tag +
+    '>' +
     n.items
       .map((it) => {
         let h = '<li' + (it.check !== null ? ' class="task"' : '') + '>';
-        if (it.check !== null) h += '<input type="checkbox" disabled' + (it.check ? ' checked' : '') + '> ';
+        if (it.check !== null)
+          h += '<input type="checkbox" disabled' + (it.check ? ' checked' : '') + '> ';
         h += it.text;
         if (it.childList) h += renderListNode(it.childList);
         return h + '</li>';
       })
       .join('') +
-    '</' + tag + '>'
+    '</' +
+    tag +
+    '>'
   );
 }
 
@@ -256,7 +283,7 @@ function renderMarkdownImpl(src: string, options: RenderOptions): RenderResult {
       i++;
       continue;
     }
-    if ((m = line.match(/^[ \t]*\$\$\s*$/))) {
+    if (/^[ \t]*\$\$\s*$/.test(line)) {
       flushP();
       const buf: string[] = [];
       i++;
@@ -281,7 +308,13 @@ function renderMarkdownImpl(src: string, options: RenderOptions): RenderResult {
       }
       i++;
       const text = buf.join('\n');
-      out.push('<pre' + (lang ? ' data-lang="' + esc(lang) + '"' : '') + '><code>' + esc(text) + '</code></pre>');
+      out.push(
+        '<pre' +
+          (lang ? ' data-lang="' + esc(lang) + '"' : '') +
+          '><code>' +
+          esc(text) +
+          '</code></pre>',
+      );
       ast.push({ type: 'code', lang, text });
       continue;
     }
@@ -325,14 +358,20 @@ function renderMarkdownImpl(src: string, options: RenderOptions): RenderResult {
       }
       continue;
     }
-    if ((m = line.match(/^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/))) {
+    if (/^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/.test(line)) {
       flushP();
       const r = parseList(lines, i, ctx, ast);
       out.push(r.html);
       i = r.next;
       continue;
     }
-    if (line.includes('|') && i + 1 < lines.length && /^[\s|:-]+$/.test(lines[i + 1]!) && lines[i + 1]!.includes('-') && lines[i + 1]!.includes('|')) {
+    if (
+      line.includes('|') &&
+      i + 1 < lines.length &&
+      /^[\s|:-]+$/.test(lines[i + 1]!) &&
+      lines[i + 1]!.includes('-') &&
+      lines[i + 1]!.includes('|')
+    ) {
       flushP();
       const r = parseTable(lines, i, ctx, ast);
       out.push(r.html);
@@ -362,7 +401,15 @@ function renderMarkdownImpl(src: string, options: RenderOptions): RenderResult {
   if (fnDefs.length) {
     out.push('<section class="footnotes"><ol>');
     for (const [, html, num] of fnDefs) {
-      out.push('<li id="fn-' + num + '">' + html + ' <a href="#fnref-' + num + '" class="footnote-back">↩</a></li>');
+      out.push(
+        '<li id="fn-' +
+          num +
+          '">' +
+          html +
+          ' <a href="#fnref-' +
+          num +
+          '" class="footnote-back">↩</a></li>',
+      );
     }
     out.push('</ol></section>');
   }

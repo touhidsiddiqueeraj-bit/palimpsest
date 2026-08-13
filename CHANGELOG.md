@@ -18,3 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CODE_OF_CONDUCT, issue/PR templates, MIT license.
 - v0 single-file prototype preserved at `reference/v0-single-file-prototype.html`
   as the source of truth for the diff algorithm and UX touches.
+- Plan + canonical spec: `PLAN.md`, `docs/PALIMPSEST_MASTER_PROMPT.md`.
+- Markdown renderer (GFM tables/task lists, callouts, footnotes, wikilinks,
+  math, sanitized links) with AST; word-level diff engine with progress
+  reporting; both covered by fixture/golden suites.
+- **File-backed history** (spec v2): immutable snapshot `.md` files with YAML
+  frontmatter under `.palimpsest/snapshots/` as source of truth; SQLite/FTS5
+  `index.db` is a derived, rebuildable index (`reindex()`); pruning moves
+  retired auto/system snapshots to `.palimpsest/archive/`
+- Context-budget-aware `recall(query, budget)` returning ranked memory bundles
+  (current/deleted/modified status); FTS search with `include_deleted`.

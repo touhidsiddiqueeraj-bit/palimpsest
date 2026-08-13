@@ -60,9 +60,7 @@ function splitBlocks(text: string): Block[] {
 }
 
 type LcsOp =
-  | { kind: 'eq'; a: number; b: number }
-  | { kind: 'del'; a: number }
-  | { kind: 'ins'; b: number };
+  { kind: 'eq'; a: number; b: number } | { kind: 'del'; a: number } | { kind: 'ins'; b: number };
 
 /**
  * Longest common subsequence via DP. Returns null when the cell budget is
@@ -169,7 +167,12 @@ export function diffProse(aText: string, bText: string, options: DiffOptions = {
   if (aText === bText) return { ops: [], added: 0, removed: 0 };
   const A = splitBlocks(aText);
   const B = splitBlocks(bText);
-  const ops = lcs(A.map((x) => x.key), B.map((x) => x.key), BLOCK_LCS_CAP) ?? trivialOps(A.length, B.length);
+  const ops =
+    lcs(
+      A.map((x) => x.key),
+      B.map((x) => x.key),
+      BLOCK_LCS_CAP,
+    ) ?? trivialOps(A.length, B.length);
 
   const out: DiffOp[] = [];
   let added = 0;
@@ -197,7 +200,12 @@ export function diffProse(aText: string, bText: string, options: DiffOptions = {
     const op = ops[k]!;
     if (op.kind === 'eq') {
       const blk = A[op.a]!;
-      out.push({ type: 'equal', text: collapse(blk.text), words: countWords(blk.text), inline: false });
+      out.push({
+        type: 'equal',
+        text: collapse(blk.text),
+        words: countWords(blk.text),
+        inline: false,
+      });
       k++;
       continue;
     }
