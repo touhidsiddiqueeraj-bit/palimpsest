@@ -10,6 +10,10 @@ import {
 import { snapshotFs, sqliteDb } from './tauri';
 import { installNetGuard, useLocalOnly, useNetActivity, setLocalOnly } from './netguard';
 import { CodeEditor } from './CodeEditor';
+import { decorateFences, wireFenceButtons } from './fences';
+import { htmlToMarkdown } from './convert';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 
 installNetGuard();
 
@@ -22,10 +26,13 @@ export default function App() {
   const [docId, setDocId] = useState<number | null>(null);
   const [text, setText] = useState('');
   const [snaps, setSnaps] = useState<SnapshotInfo[]>([]);
+  const [kindFilter, setKindFilter] = useState<'all' | SnapshotInfo['kind']>('all');
   const [selected, setSelected] = useState<number | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [fenceMsg, setFenceMsg] = useState<string | null>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const snapshotTimer = useRef<number | null>(null);
   const lastLen = useRef(INITIAL.length);
 
@@ -117,6 +124,66 @@ export default function App() {
     setSelected(id);
   };
 
+  const previewHtml = useMemo(() => {
+    const raw = renderMarkdown(preview ?? text).html;
+    return decorateFences(raw);
+  }, [preview, text]);
+
+  useEffect(() => {
+    if (!previewRef.current) return;
+    return wireFenceButtons(previewRef.current, (ok, msg) => {
+      setFenceMsg(ok ? `Rendered ${msg} diagram` : `Render failed: ${msg}`);
+    });
+  }, [previewHtml]);
+
+  const filtered = useMemo(
+    () => (kindFilter === 'all' ? snaps : snaps.filter((s) => s.kind === kindFilter)),
+    [snaps, kindFilter],
+  );
+
+  const onRename = async (s: SnapshotInfo) => {
+    if (!store || docId === null) return;
+    const label = window.prompt('Milestone name', s.label || '');
+    if (label === null || label === s.label) return;
+    await store.renameSnapshot(docId, s.id, label.trim() || s.label);
+    await refreshSnaps(docId);
+  };
+
+  const onExport = async () => {
+    const html = renderMarkdown(text).html;
+    const path = await save({
+      defaultPath: 'notes.html',
+      filters: [{ name: 'HTML', extensions: ['html'] }],
+    });
+    if (!path) return;
+    await writeTextFile(path, html);
+  };
+
+  const onImport = async () => {
+    const path = await open({ filters: [{ name: 'Markdown / HTML', extensions: ['md', 'html'] }] });
+    if (!path) return;
+    const raw = await readTextFile(path);
+    const isHtml = /\.html?$/i.test(path);
+    setText(isHtml ? htmlToMarkdown(raw) : raw);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const alt = e.altKey;
+      const exportKey = /Mac/.test(navigator.platform) ? 'l' : 'l';
+      if (alt && e.key.toLowerCase() === exportKey) {
+        e.preventDefault();
+        void onExport();
+      }
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        void onImport();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   const diffWords = useMemo(() => diffProse(INITIAL, text), [text]);
 
   if (err) {
@@ -141,6 +208,16 @@ export default function App() {
           · {diffWords.removed} removed, {diffWords.added} added vs v0
         </span>
         <div className="ml-auto flex items-center gap-3">
+          <button
+            className="text-xs underline"
+            onClick={() => void onImport()}
+            title="Ctrl+Shift+I"
+          >
+            Import
+          </button>
+          <button className="text-xs underline" onClick={() => void onExport()} title="Alt+L">
+            Export HTML
+          </button>
           <label className="flex items-center gap-1">
             <input
               type="checkbox"
@@ -170,26 +247,41 @@ export default function App() {
           <input
             type="range"
             min={0}
-            max={Math.max(0, snaps.length - 1)}
+            max={Math.max(0, filtered.length - 1)}
             value={
               selected === null
                 ? 0
                 : Math.max(
                     0,
-                    snaps.findIndex((s) => s.id === selected),
+                    filtered.findIndex((s) => s.id === selected),
                   )
             }
             onChange={(e) => {
-              const s = snaps[Number(e.target.value)];
+              const s = filtered[Number(e.target.value)];
               if (s) void openPreview(s.id);
             }}
             className="w-full"
           />
+          <div className="mt-2 flex flex-wrap gap-1">
+            {(['all', 'auto', 'milestone', 'system', 'ai'] as const).map((k) => (
+              <button
+                key={k}
+                onClick={() => setKindFilter(k)}
+                className={`rounded px-2 py-0.5 text-xs ${
+                  kindFilter === k ? 'bg-stone-300' : 'bg-stone-100 hover:bg-stone-200'
+                }`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
           <ul className="mt-2 space-y-1">
-            {snaps.map((s) => (
+            {filtered.map((s) => (
               <li key={s.id}>
                 <button
                   onClick={() => void openPreview(s.id)}
+                  onDoubleClick={() => s.kind === 'milestone' && void onRename(s)}
+                  title={s.kind === 'milestone' ? 'Double-click to rename' : undefined}
                   className={`w-full rounded px-2 py-1 text-left hover:bg-stone-100 ${
                     selected === s.id ? 'bg-stone-200' : ''
                   }`}
@@ -213,8 +305,12 @@ export default function App() {
         <main className="flex flex-1 flex-col">
           <div className="flex flex-1 overflow-hidden">
             <CodeEditor value={text} onChange={onEdit} />
-            <div className="w-1/2 overflow-y-auto border-l border-stone-200 p-4 text-sm">
-              <div dangerouslySetInnerHTML={{ __html: renderMarkdown(preview ?? text).html }} />
+            <div
+              ref={previewRef}
+              className="w-1/2 overflow-y-auto border-l border-stone-200 p-4 text-sm"
+            >
+              <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
+              {fenceMsg && <div className="mt-2 text-xs text-stone-500">{fenceMsg}</div>}
               {preview !== null && (
                 <div className="mt-4 border-t border-stone-200 pt-2 text-xs text-stone-400">
                   Previewing snapshot —{' '}
