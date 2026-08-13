@@ -325,6 +325,12 @@ export default function App() {
         <main className="flex flex-1 items-center justify-center text-sm text-red-700">
           Backend unavailable (run inside Tauri): {err}
         </main>
+        <button
+          className="border-t border-stone-200 px-4 py-2 text-sm text-stone-600 hover:text-stone-900"
+          onClick={() => setErr(null)}
+        >
+          Continue without history (editor only)
+        </button>
       </div>
     );
   }
