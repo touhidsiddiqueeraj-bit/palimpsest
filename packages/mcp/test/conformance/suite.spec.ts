@@ -5,7 +5,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 // relative import (matches core's own test pattern): package-name imports
 // engage vite's dep optimizer, which chokes on node:sqlite (vite <6)
-import { createHistoryStore, type HistoryStore, type SqliteDb, type SnapshotFs } from '../../../core/src/index.js';
+import {
+  createHistoryStore,
+  type HistoryStore,
+  type SqliteDb,
+  type SnapshotFs,
+} from '../../../core/src/index.js';
 import { TOOLS, type McpContext } from '../../src/index.js';
 
 function memoryDb(): SqliteDb {
@@ -15,7 +20,10 @@ function memoryDb(): SqliteDb {
       const stmt = d.prepare(sql);
       return (params.length ? stmt.all(...(params as never[])) : stmt.all()) as T[];
     },
-    async execute(sql: string, params: unknown[] = []): Promise<{ lastInsertId: number; changes: number }> {
+    async execute(
+      sql: string,
+      params: unknown[] = [],
+    ): Promise<{ lastInsertId: number; changes: number }> {
       const stmt = d.prepare(sql);
       const r = stmt.run(...(params as never[]));
       return { lastInsertId: Number(r.lastInsertRowid), changes: Number(r.changes ?? 1) };
@@ -24,8 +32,7 @@ function memoryDb(): SqliteDb {
 }
 
 function demoFs(root: string): SnapshotFs {
-  const dir = (archived: boolean) =>
-    join(root, '.palimpsest', archived ? 'archive' : 'snapshots');
+  const dir = (archived: boolean) => join(root, '.palimpsest', archived ? 'archive' : 'snapshots');
   return {
     async list() {
       const out: Array<{ name: string; archived: boolean }> = [];
@@ -72,7 +79,12 @@ beforeAll(async () => {
   await store.init();
   const doc = await store.getOrCreateDoc('notes.md', 'notes.md');
   await writeFile(join(ws, 'notes.md'), '# Alpha\n\nThe quick brown fox jumps.\n');
-  const v1 = await store.capture(doc.id, '# Alpha\n\nThe quick brown fox jumps.\n', 'milestone', 'v1');
+  const v1 = await store.capture(
+    doc.id,
+    '# Alpha\n\nThe quick brown fox jumps.\n',
+    'milestone',
+    'v1',
+  );
   await store.capture(doc.id, '# Alpha\n\nThe lazy dog sleeps.\n', 'milestone', 'v2');
   v1Id = v1.id;
   ctx = { store, workspace: ws, localOnly: true };
@@ -101,13 +113,19 @@ describe('conformance (MCP server tools)', () => {
     const doc = await store.getOrCreateDoc('notes.md', 'notes.md');
     const feline = '# Chapter one\n\nThe quick brown feline jumps over the lazy dog.\n';
     await store.capture(doc.id, feline, 'auto', 'v2');
-    expect(((await call('restore_version', { doc: 'notes.md', snapshot_id: v1Id, dry_run: false })) as { restored_to: number }).restored_to).toBeTruthy();
+    expect(
+      (
+        (await call('restore_version', { doc: 'notes.md', snapshot_id: v1Id, dry_run: false })) as {
+          restored_to: number;
+        }
+      ).restored_to,
+    ).toBeTruthy();
     const r = (await call('recall', { query: 'brown', token_budget: 512 })) as {
       results: Array<{ status: string; text: string }>;
       tokens_used: number;
       truncated: boolean;
     };
-        expect(r.truncated).toBe(false);
+    expect(r.truncated).toBe(false);
     expect(r.tokens_used).toBeGreaterThan(0);
     expect(r.results.some((h) => h.status === 'modified' && h.text.includes('feline'))).toBe(true);
     expect(r.results.some((h) => h.status === 'current' && h.text.includes('fox'))).toBe(true);
@@ -134,11 +152,19 @@ describe('conformance (MCP server tools)', () => {
     expect(doc.tokens_used).toBeGreaterThan(0);
     const stats = (await call('get_stats')) as { tokens_used: number };
     expect(stats.tokens_used).toBeGreaterThan(0);
-    const dry = (await call('create_milestone', { doc: 'notes.md', label: 'probe', dry_run: true })) as {
+    const dry = (await call('create_milestone', {
+      doc: 'notes.md',
+      label: 'probe',
+      dry_run: true,
+    })) as {
       tokens_used: number;
     };
     expect(dry.tokens_used).toBeGreaterThan(0);
-    const restore = (await call('restore_version', { doc: 'notes.md', snapshot_id: v1Id, dry_run: true })) as {
+    const restore = (await call('restore_version', {
+      doc: 'notes.md',
+      snapshot_id: v1Id,
+      dry_run: true,
+    })) as {
       tokens_used: number;
     };
     expect(restore.tokens_used).toBeGreaterThan(0);
@@ -160,7 +186,11 @@ describe('conformance (MCP server tools)', () => {
 
   it('create_milestone captures the file content as a snapshot', async () => {
     const before = await readFile(join(ws, 'notes.md'), 'utf8');
-    const dry = (await call('create_milestone', { doc: 'notes.md', label: 'probe', dry_run: true })) as {
+    const dry = (await call('create_milestone', {
+      doc: 'notes.md',
+      label: 'probe',
+      dry_run: true,
+    })) as {
       dry_run: boolean;
       snapshot: string;
     };
