@@ -4,6 +4,29 @@ import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 
+function wrap(
+  view: EditorView,
+  before: string,
+  after = before,
+  url?: (sel: string) => string,
+): boolean {
+  const { from, to } = view.state.selection.main;
+  const sel = view.state.sliceDoc(from, to) || 'text';
+  view.dispatch({
+    changes: { from, to, insert: `${before}${url ? url(sel) : sel}${after}` },
+    selection: { anchor: from + before.length, head: from + before.length + sel.length },
+  });
+  view.focus();
+  return true;
+}
+
+const shortcuts = keymap.of([
+  { key: 'Mod-b', run: (v) => wrap(v, '**') },
+  { key: 'Mod-i', run: (v) => wrap(v, '*') },
+  { key: 'Mod-k', run: (v) => wrap(v, '[', '](https://)', (sel) => sel) },
+  { key: 'Mod-shift-k', run: (v) => wrap(v, '**', '**', (sel) => sel) },
+]);
+
 export function CodeEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
@@ -17,6 +40,7 @@ export function CodeEditor({ value, onChange }: { value: string; onChange: (v: s
         lineNumbers(),
         history(),
         markdown(),
+        shortcuts,
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current(u.state.doc.toString());
