@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   live verification transcript).
 - README: PolyForm Noncommercial 1.0.0 license badge; license change from
   MIT to non-commercial use (see LICENSE).
+- Desktop: configurable AI provider — server URL, model, and API key are set
+  in a Settings panel (URL/model persisted; key kept in memory only, never
+  stored). Provider selection no longer assumes Ollama on localhost; friendly
+  connection errors point at the Settings panel. AI remains fully optional:
+  the editor/history/diff flows never require a provider.
+- Desktop: palimpsest logo — layered-pages mark (ink, paper slats, amber
+  milestone dot) at all icon sizes; regenerable via `scripts/make-logo.py`.
+
+### Fixed
+
+- Desktop: app crash on first run — "unable to open database file". The
+  workspace directory is now created before the SQLite database opens, and the
+  workspace path is resolved to an absolute path inside the app-data dir so
+  the `$HOME/**` fs scope accepts it ("forbidden path" no longer occurs).
 
 ### Changed
 
