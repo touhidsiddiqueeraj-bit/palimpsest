@@ -17,6 +17,7 @@
     "fs:allow-mkdir",
     { "identifier": "fs:scope", "allow": [
       { "path": "$APPDATA/**" },
+      { "path": "$APPDATA/dev.palimpsest.app/palimpsest-demo/.palimpsest/**" },
       { "path": "$APPCONFIG/**" }
     ] },
     "dialog:default"
