@@ -204,6 +204,10 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    document.body.dataset.theme = theme;
+  }, [theme]);
+
   const toggleTheme = () =>
     setTheme((t) => {
       const n = t === 'light' ? 'dark' : 'light';
@@ -291,6 +295,7 @@ export default function App() {
       },
       { label: 'Read mode', hint: 'view', run: () => setViewMode('read') },
       { label: 'Toggle theme', hint: theme, run: toggleTheme },
+      { label: 'Close', hint: 'esc', run: () => setPaletteOpen(false) },
       { label: 'Record milestone', run: () => void createMilestone() },
       { label: 'Export HTML', run: () => void onExport() },
       { label: 'Print / PDF', run: onPrintPdf },
