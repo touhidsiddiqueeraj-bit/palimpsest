@@ -9,8 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Monorepo scaffold (pnpm workspaces): `apps/desktop` (Tauri 2 + React 18),
+- Full project documentation: `README.md` (features, media, MCP setup),
+  `docs/ARCHITECTURE.md` (capability layer, file-first storage, MCP spine),
+  `docs/VERIFICATION.md` (reproducible live proof: stdio, HTTP, opencode),
+  media under `docs/media/` (editor + v0 screenshots, architecture SVG,
+  live verification transcript).
+- README: PolyForm Noncommercial 1.0.0 license badge; license change from
+  MIT to non-commercial use (see LICENSE).
+
+### Changed
+
+- License: MIT → **PolyForm Noncommercial 1.0.0** — free for personal,
+  research, educational, and noncommercial-organization use; commercial use
+  requires a separate license.
+
+### Removed
+
+- Root `postinstall` script (ran before root bins were linked in CI);
+  build the MCP CLI bundle explicitly with `pnpm --filter @palimpsest/mcp build:cli`.
+
   `packages/core`, `packages/ai`, `packages/mcp`.
+
 - Tauri 2 desktop shell with SQLite plugin; hello-world boots on Linux.
 - CI (lint, typecheck, unit tests, MCP conformance, Playwright, build),
   release automation for Linux/macOS/Windows installers, CodeQL, Dependabot.
