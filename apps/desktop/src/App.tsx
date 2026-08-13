@@ -121,7 +121,14 @@ export default function App() {
 
   if (err) {
     return (
-      <main className="flex h-screen items-center justify-center text-sm text-red-700">{err}</main>
+      <div className="flex h-screen flex-col">
+        <header className="border-b border-stone-200 px-4 py-2 text-sm">
+          <h1 className="font-semibold">Palimpsest</h1>
+        </header>
+        <main className="flex flex-1 items-center justify-center text-sm text-red-700">
+          Backend unavailable (run inside Tauri): {err}
+        </main>
+      </div>
     );
   }
 
