@@ -5,6 +5,7 @@ import {
   renderMarkdown,
   snapshotDue,
   type HistoryStore,
+  type SearchHit,
   type SnapshotInfo,
 } from '@palimpsest/core';
 import { snapshotFs, sqliteDb } from './tauri';
@@ -13,6 +14,7 @@ import { CodeEditor, type EditorApi } from './CodeEditor';
 import { decorateFences, wireFenceButtons } from './fences';
 import { htmlToMarkdown } from './convert';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 import { mkdir, readDir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { appDataDir } from '@tauri-apps/api/path';
 import { createClient, inlineEdit, DEFAULT_PROVIDERS, isLocalUrl, type Provider } from '@palimpsest/ai';
@@ -39,6 +41,7 @@ export default function App() {
   const docNamesRef = useRef(new Map<number, string>());
   const editorApiRef = useRef<EditorApi | null>(null);
   const newDocInputRef = useRef<HTMLInputElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(
     () => (localStorage.getItem('palimpsest.theme') as 'light' | 'dark') || 'light',
   );
@@ -48,7 +51,7 @@ export default function App() {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [typewriter, setTypewriter] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<Array<{ doc: string; hits: number }>>([]);
+  const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const searchTimer = useRef<number | null>(null);
   const [links, setLinks] = useState<Array<{ from: string; to: string }>>([]);
   const [fenceMsg, setFenceMsg] = useState<string | null>(null);
@@ -88,38 +91,56 @@ export default function App() {
   const localOnlyRef = useRef(localOnly);
   localOnlyRef.current = localOnly;
 
+  const openWorkspace = async (workspace: string) => {
+    wsRef.current = workspace;
+    const fs = snapshotFs(workspace);
+    await mkdir(workspace, { recursive: true });
+    const db = await sqliteDb(`${workspace}/.palimpsest/index.db`);
+    const s = createHistoryStore(db, fs);
+    await s.init();
+    setStore(s);
+    const entries = await readDir(workspace);
+    const mds = entries
+      .filter((e) => e.name.endsWith('.md'))
+      .map((e) => e.name)
+      .sort();
+    let name: string;
+    if (mds.length > 0) {
+      name = mds[0]!;
+    } else {
+      name = 'notes.md';
+      await writeTextFile(`${workspace}/notes.md`, INITIAL);
+    }
+    let t = INITIAL;
+    try {
+      t = await readTextFile(`${workspace}/${name}`);
+    } catch {
+      /* freshly created doc */
+    }
+    const doc = await s.getOrCreateDoc(name, name);
+    docNamesRef.current.set(doc.id, name);
+    const list = await s.list(doc.id);
+    if (list.length === 0 && mds.length === 0) {
+      await s.capture(doc.id, t, 'milestone', 'Chapter one');
+      await s.capture(doc.id, t, 'auto', 'seed');
+    }
+    setDocId(doc.id);
+    setActiveDoc(name);
+    setText(t);
+    lastLen.current = t.length;
+    await loadDocs();
+    await refreshSnaps(doc.id);
+  };
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const workspace = await `${await appDataDir()}/palimpsest-demo`;
-        wsRef.current = workspace;
-        const fs = snapshotFs(workspace);
-        await mkdir(workspace, { recursive: true });
-        const db = await sqliteDb(`${workspace}/index.db`);
-        const s = createHistoryStore(db, fs);
-        await s.init();
-        if (cancelled) return;
-        setStore(s);
-        let t = INITIAL;
-        try {
-          t = await readTextFile(await `${workspace}/notes.md`);
-        } catch {
-          await writeTextFile(await `${workspace}/notes.md`, INITIAL);
-        }
-        const doc = await s.getOrCreateDoc('notes.md', 'notes.md');
-        docNamesRef.current.set(doc.id, 'notes.md');
-        const list = await s.list(doc.id);
-        if (list.length === 0) {
-          await s.capture(doc.id, t, 'milestone', 'Chapter one');
-          await s.capture(doc.id, t, 'auto', 'seed');
-        }
-        setDocId(doc.id);
-        setText(t);
-        lastLen.current = t.length;
-        await loadDocs();
+        const saved = await invoke<string | null>('get_workspace');
+        const workspace = saved ?? (await `${await appDataDir()}/palimpsest-demo`);
+        await openWorkspace(workspace);
       } catch (e) {
-        setErr(String(e));
+        if (!cancelled) setErr(String(e));
       }
     })();
     return () => {
@@ -175,6 +196,20 @@ export default function App() {
     await loadDocs();
   };
 
+  const changeWorkspace = async () => {
+    try {
+      const picked = await invoke<string | null>('pick_workspace');
+      if (!picked) return;
+      setSelected(null);
+      setPreview(null);
+      setSearchQuery('');
+      setSearchResults([]);
+      await openWorkspace(picked);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
   const createMilestone = async () => {
     if (!store || docId === null) return;
     const label = window.prompt('Name this moment', new Date().toLocaleString());
@@ -219,23 +254,26 @@ export default function App() {
     setSearchQuery(q);
     if (searchTimer.current) window.clearTimeout(searchTimer.current);
     searchTimer.current = window.setTimeout(async () => {
-      const t = q.trim().toLowerCase();
-      if (!t || !wsRef.current) {
+      if (!q.trim() || !store) {
         setSearchResults([]);
         return;
       }
-      const res: Array<{ doc: string; hits: number }> = [];
-      for (const d of docs) {
-        try {
-          const txt = await readTextFile(`${wsRef.current}/${d}`);
-          const hits = txt.toLowerCase().split(t).length - 1;
-          if (hits > 0) res.push({ doc: d, hits });
-        } catch {
-          /* skip */
-        }
+      try {
+        setSearchResults(await store.search(q, 30, true));
+      } catch {
+        setSearchResults([]);
       }
-      setSearchResults(res);
     }, 250);
+  };
+
+  const onSearchOpen = async (r: (typeof searchResults)[number]) => {
+    if (r.source === 'history' && r.snapshotId && r.docId) {
+      setSelected(r.snapshotId);
+      const snap = await store!.get(r.docId, r.snapshotId);
+      setPreview(snap.text);
+    } else {
+      await openDoc(r.docName);
+    }
   };
 
   const loadLinks = async () => {
@@ -557,6 +595,10 @@ export default function App() {
         e.preventDefault();
         void onImport();
       }
+      if (e.ctrlKey && e.shiftKey && k === 'f') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -645,7 +687,16 @@ export default function App() {
       </header>
       <div className="flex flex-1 overflow-hidden">
         <aside className="w-44 shrink-0 overflow-y-auto border-r border-stone-200 p-3 text-sm">
-          <h2 className="mb-2 font-semibold">Docs</h2>
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="font-semibold">Docs</h2>
+            <button
+              className="text-xs text-stone-400 underline hover:text-stone-600"
+              onClick={() => void changeWorkspace()}
+              title="Choose a different workspace folder"
+            >
+              change…
+            </button>
+          </div>
           <ul className="space-y-1">
             {docs.map((d) => (
               <li key={d}>
@@ -684,20 +735,36 @@ export default function App() {
           <div className="mt-3 border-t border-stone-200 pt-2">
             <input
               value={searchQuery}
+              ref={searchInputRef}
               onChange={(e) => onSearch(e.target.value)}
               placeholder="search notes…"
               className="w-full rounded border border-stone-300 px-1.5 py-0.5 text-xs outline-none focus:border-stone-500"
             />
             {searchResults.length > 0 && (
               <ul className="mt-1 space-y-1">
-                {searchResults.map((r) => (
-                  <li key={r.doc}>
+                {searchResults.map((r, i) => (
+                  <li key={`${r.docName}-${i}`}>
                     <button
-                      onClick={() => void openDoc(r.doc)}
-                      className="w-full rounded px-1.5 py-0.5 text-left text-xs hover:bg-stone-100"
+                      onClick={() => void onSearchOpen(r)}
+                      className="w-full rounded px-1.5 py-0.5 text-left hover:bg-stone-100"
+                      title={r.snippet}
                     >
-                      <span className="truncate">{r.doc}</span>{' '}
-                      <span className="text-stone-400">{r.hits}</span>
+                      <span className="truncate text-xs">
+                        {r.docName}
+                        {r.source === 'history' && (
+                          <span
+                            className={
+                              'ml-1 rounded px-1 text-[10px] ' +
+                              (r.status === 'deleted'
+                                ? 'bg-red-100 text-red-600'
+                                : 'bg-amber-100 text-amber-600')
+                            }
+                          >
+                            {r.status}
+                          </span>
+                        )}
+                      </span>
+                      <span className="block truncate text-[10px] text-stone-500">{r.snippet}</span>
                     </button>
                   </li>
                 ))}
