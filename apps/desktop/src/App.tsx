@@ -13,7 +13,7 @@ import { CodeEditor } from './CodeEditor';
 import { decorateFences, wireFenceButtons } from './fences';
 import { htmlToMarkdown } from './convert';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { mkdir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { createClient, inlineEdit, DEFAULT_PROVIDERS, type Provider } from '@palimpsest/ai';
 
 installNetGuard();
@@ -62,6 +62,7 @@ export default function App() {
     (async () => {
       try {
         const fs = snapshotFs(WORKSPACE);
+        await mkdir(WORKSPACE, { recursive: true });
         const db = await sqliteDb(`${WORKSPACE}/index.db`);
         const s = createHistoryStore(db, fs);
         await s.init();
