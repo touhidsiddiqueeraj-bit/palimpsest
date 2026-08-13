@@ -9,7 +9,7 @@ import {
 } from '@palimpsest/core';
 import { snapshotFs, sqliteDb } from './tauri';
 import { installNetGuard, useLocalOnly, useNetActivity, setLocalOnly } from './netguard';
-import { CodeEditor } from './CodeEditor';
+import { CodeEditor, type EditorApi } from './CodeEditor';
 import { decorateFences, wireFenceButtons } from './fences';
 import { htmlToMarkdown } from './convert';
 import { open, save } from '@tauri-apps/plugin-dialog';
@@ -37,6 +37,20 @@ export default function App() {
   const [newDocName, setNewDocName] = useState('');
   const wsRef = useRef<string | null>(null);
   const docNamesRef = useRef(new Map<number, string>());
+  const editorApiRef = useRef<EditorApi | null>(null);
+  const newDocInputRef = useRef<HTMLInputElement | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>(
+    () => (localStorage.getItem('palimpsest.theme') as 'light' | 'dark') || 'light',
+  );
+  const [viewMode, setViewMode] = useState<'write' | 'split' | 'read'>('split');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState('');
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [typewriter, setTypewriter] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Array<{ doc: string; hits: number }>>([]);
+  const searchTimer = useRef<number | null>(null);
+  const [links, setLinks] = useState<Array<{ from: string; to: string }>>([]);
   const [fenceMsg, setFenceMsg] = useState<string | null>(null);
   const [proposal, setProposal] = useState<{
     proposed: string;
@@ -52,7 +66,7 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [usage, setUsage] = useState(0);
-  const [tab, setTab] = useState<'edit' | 'chat'>('edit');
+  const [tab, setTab] = useState<'edit' | 'chat' | 'links'>('edit');
   const [aiCfg, setAiCfg] = useState<{ baseUrl: string; model: string }>(() => {
     try {
       return JSON.parse(localStorage.getItem('palimpsest.ai') ?? '') as {
@@ -160,6 +174,150 @@ export default function App() {
     await openDoc(name);
     await loadDocs();
   };
+
+  const createMilestone = async () => {
+    if (!store || docId === null) return;
+    const label = window.prompt('Name this moment', new Date().toLocaleString());
+    if (!label) return;
+    await store.capture(docId, text, 'milestone', label);
+    persistLive(docId, text);
+    lastLen.current = text.length;
+    await refreshSnaps(docId);
+  };
+
+  const onPrintPdf = () => {
+    const html =
+      '<!doctype html><html><head><meta charset="utf-8"><title>' +
+      activeDoc +
+      '</title><style>body{font-family:Georgia,serif;max-width:42rem;margin:2.5rem auto;line-height:1.7;color:#1a1a1a}h1,h2,h3{line-height:1.25}code{font-family:ui-monospace,monospace;font-size:.9em}pre{background:#f4f4f4;padding:1rem;overflow:auto}blockquote{border-left:3px solid #ccc;margin-left:0;padding-left:1rem;color:#555}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.3rem .6rem}</style></head><body>' +
+      previewHtml +
+      '</body></html>';
+    try {
+      const w = window.open('', '_blank');
+      if (!w) throw new Error('popup blocked');
+      w.document.write(html);
+      w.document.close();
+      w.focus();
+      setTimeout(() => w.print(), 300);
+    } catch {
+      setFenceMsg('Popup blocked — use Export HTML and print from a browser.');
+    }
+  };
+
+  const toggleTheme = () =>
+    setTheme((t) => {
+      const n = t === 'light' ? 'dark' : 'light';
+      localStorage.setItem('palimpsest.theme', n);
+      return n;
+    });
+
+  const onSearch = (q: string) => {
+    setSearchQuery(q);
+    if (searchTimer.current) window.clearTimeout(searchTimer.current);
+    searchTimer.current = window.setTimeout(async () => {
+      const t = q.trim().toLowerCase();
+      if (!t || !wsRef.current) {
+        setSearchResults([]);
+        return;
+      }
+      const res: Array<{ doc: string; hits: number }> = [];
+      for (const d of docs) {
+        try {
+          const txt = await readTextFile(`${wsRef.current}/${d}`);
+          const hits = txt.toLowerCase().split(t).length - 1;
+          if (hits > 0) res.push({ doc: d, hits });
+        } catch {
+          /* skip */
+        }
+      }
+      setSearchResults(res);
+    }, 250);
+  };
+
+  const loadLinks = async () => {
+    if (!wsRef.current) return;
+    const found: Array<{ from: string; to: string }> = [];
+    for (const d of docs) {
+      try {
+        const txt = await readTextFile(`${wsRef.current}/${d}`);
+        for (const m of txt.matchAll(/\[\[([^\]|#!]+)/g)) found.push({ from: d, to: (m[1] ?? '').trim() });
+      } catch {
+        /* skip */
+      }
+    }
+    setLinks(found);
+  };
+
+  useEffect(() => {
+    void loadLinks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docs]);
+
+  const outline = useMemo(() => {
+    const out: Array<{ level: number; text: string; line: number }> = [];
+    let line = 0;
+    for (const ln of text.split('\n')) {
+      line++;
+      const m = ln.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+      if (m) out.push({ level: m[1]?.length ?? 1, text: m[2] ?? '', line });
+    }
+    return out;
+  }, [text]);
+
+  const words = useMemo(() => (text.trim() ? text.trim().split(/\s+/).length : 0), [text]);
+
+  const incomingLinks = useMemo(
+    () =>
+      links
+        .filter((l) => l.to === activeDoc.replace(/\.md$/, '') || l.to === activeDoc)
+        .map((l) => l.from),
+    [links, activeDoc],
+  );
+
+  const paletteItems = useMemo(() => {
+    const items: Array<{ label: string; hint?: string; run: () => void }> = [
+      ...docs.map((d) => ({ label: 'Open ' + d, run: () => void openDoc(d) })),
+      {
+        label: 'New document',
+        run: () => {
+          setViewMode('write');
+          newDocInputRef.current?.focus();
+        },
+      },
+      {
+        label: viewMode === 'split' ? 'Write only' : viewMode === 'write' ? 'Split view' : 'Write view',
+        hint: 'view',
+        run: () => setViewMode(viewMode === 'split' ? 'write' : 'split'),
+      },
+      { label: 'Read mode', hint: 'view', run: () => setViewMode('read') },
+      { label: 'Toggle theme', hint: theme, run: toggleTheme },
+      { label: 'Record milestone', run: () => void createMilestone() },
+      { label: 'Export HTML', run: () => void onExport() },
+      { label: 'Print / PDF', run: onPrintPdf },
+      { label: 'Import markdown', run: () => void onImport() },
+    ];
+    const q = paletteQuery.trim().toLowerCase();
+    return q ? items.filter((c) => c.label.toLowerCase().includes(q)) : items;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docs, viewMode, theme, paletteQuery, activeDoc]);
+
+  const toolbar = [
+    ['B', () => editorApiRef.current?.wrap('**')],
+    ['I', () => editorApiRef.current?.wrap('*')],
+    ['S', () => editorApiRef.current?.wrap('~~')],
+    ['`', () => editorApiRef.current?.wrap('`')],
+    ['Link', () => editorApiRef.current?.wrap('[', '](https://)', (sel) => sel)],
+    ['H1', () => editorApiRef.current?.insert('# ')],
+    ['H2', () => editorApiRef.current?.insert('## ')],
+    ['H3', () => editorApiRef.current?.insert('### ')],
+    ['Quote', () => editorApiRef.current?.insert('> ')],
+    ['• List', () => editorApiRef.current?.insert('- ')],
+    ['1. List', () => editorApiRef.current?.insert('1. ')],
+    ['☑ Task', () => editorApiRef.current?.insert('- [ ] ')],
+    ['Table', () => editorApiRef.current?.insert('| col | col |\n| --- | --- |\n|  |  |')],
+    ['÷ Rule', () => editorApiRef.current?.insert('---')],
+    ['Note', () => editorApiRef.current?.insert('> [!note]')],
+  ] as const;
 
   const refreshSnaps = async (id: number) => {
     if (!store) return;
@@ -366,13 +524,31 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const alt = e.altKey;
-      const exportKey = /Mac/.test(navigator.platform) ? 'l' : 'l';
-      if (alt && e.key.toLowerCase() === exportKey) {
+      const mod = e.metaKey || e.ctrlKey;
+      const k = e.key.toLowerCase();
+      if (mod && k === 'p') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+      if (mod && e.shiftKey && k === 'm') {
+        e.preventDefault();
+        void createMilestone();
+        return;
+      }
+      if (mod && k === 's') {
+        e.preventDefault();
+        if (docId !== null) {
+          persistLive(docId, text);
+          setSavedAt(Date.now());
+        }
+        return;
+      }
+      if (e.altKey && k === 'l') {
         e.preventDefault();
         void onExport();
       }
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'i') {
+      if (e.ctrlKey && e.shiftKey && k === 'i') {
         e.preventDefault();
         void onImport();
       }
@@ -403,14 +579,25 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-screen flex-col" data-theme={theme}>
       <header className="flex items-center gap-4 border-b border-stone-200 px-4 py-2 text-sm">
         <h1 className="font-semibold">Palimpsest</h1>
         <span className="text-stone-500">{activeDoc}</span>
         <span className="text-stone-400">
           · {diffWords.removed} removed, {diffWords.added} added vs v0
         </span>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2">
+          <div className="flex overflow-hidden rounded border border-stone-300 text-xs">
+            {(['write', 'split', 'read'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setViewMode(m)}
+                className={`px-2 py-0.5 ${viewMode === m ? 'bg-stone-900 text-white' : 'hover:bg-stone-100'}`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
           <button
             className="text-xs underline"
             onClick={() => void onImport()}
@@ -420,6 +607,16 @@ export default function App() {
           </button>
           <button className="text-xs underline" onClick={() => void onExport()} title="Alt+L">
             Export HTML
+          </button>
+          <button
+            className="text-xs underline"
+            onClick={onPrintPdf}
+            title="Print or save as PDF"
+          >
+            Print
+          </button>
+          <button className="text-xs underline" onClick={toggleTheme} title="Toggle theme">
+            {theme === 'light' ? 'Dark' : 'Light'}
           </button>
           <label className="flex items-center gap-1">
             <input
@@ -463,6 +660,7 @@ export default function App() {
           <div className="mt-3 flex gap-1">
             <input
               value={newDocName}
+              ref={newDocInputRef}
               onChange={(e) => setNewDocName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void createDoc();
@@ -478,6 +676,48 @@ export default function App() {
               +
             </button>
           </div>
+          <div className="mt-3 border-t border-stone-200 pt-2">
+            <input
+              value={searchQuery}
+              onChange={(e) => onSearch(e.target.value)}
+              placeholder="search notes…"
+              className="w-full rounded border border-stone-300 px-1.5 py-0.5 text-xs outline-none focus:border-stone-500"
+            />
+            {searchResults.length > 0 && (
+              <ul className="mt-1 space-y-1">
+                {searchResults.map((r) => (
+                  <li key={r.doc}>
+                    <button
+                      onClick={() => void openDoc(r.doc)}
+                      className="w-full rounded px-1.5 py-0.5 text-left text-xs hover:bg-stone-100"
+                    >
+                      <span className="truncate">{r.doc}</span>{' '}
+                      <span className="text-stone-400">{r.hits}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {outline.length > 0 && (
+            <div className="mt-3 border-t border-stone-200 pt-2">
+              <h3 className="mb-1 text-xs font-semibold text-stone-500">Outline</h3>
+              <ul className="space-y-0.5">
+                {outline.map((o, i) => (
+                  <li key={i}>
+                    <button
+                      onClick={() => editorApiRef.current?.scrollToLine(o.line)}
+                      className="w-full truncate rounded px-1.5 py-0.5 text-left text-xs hover:bg-stone-100"
+                      style={{ paddingLeft: 6 + o.level * 8 }}
+                      title={o.text}
+                    >
+                      {o.text}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </aside>
         <aside className="w-80 overflow-y-auto border-r border-stone-200 p-3 text-sm">
           <div className="mb-2 flex items-center justify-between">
@@ -543,13 +783,13 @@ export default function App() {
           </ul>
           <div className="mt-4 border-t border-stone-200 pt-3">
             <div className="mb-2 flex gap-1">
-              {(['edit', 'chat'] as const).map((t) => (
+              {(['edit', 'chat', 'links'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
                   className={`rounded px-2 py-0.5 text-xs ${tab === t ? 'bg-stone-300' : 'bg-stone-100 hover:bg-stone-200'}`}
                 >
-                  {t === 'edit' ? 'Edit' : 'Chat'}
+                  {t === 'edit' ? 'Edit' : t === 'chat' ? 'Chat' : 'Links'}
                 </button>
               ))}
             </div>
@@ -691,36 +931,157 @@ export default function App() {
                 )}
               </>
             )}
+            {tab === 'links' && (
+              <div className="text-xs">
+                <h2 className="mb-1 font-semibold">Backlinks</h2>
+                {incomingLinks.length === 0 ? (
+                  <p className="text-stone-400">
+                    Nothing links to this note yet. Use [[wikilinks]] in other notes to connect
+                    them here.
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {incomingLinks.map((f) => (
+                      <li key={f}>
+                        <button
+                          onClick={() => void openDoc(f)}
+                          className="w-full rounded px-2 py-1 text-left hover:bg-stone-100"
+                        >
+                          {f}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="mt-3 border-t border-stone-200 pt-2 text-stone-400">
+                  {links.length} links across {docs.length} notes
+                </div>
+              </div>
+            )}
           </div>
         </aside>
-        <main className="flex flex-1 flex-col">
-          <div className="flex flex-1 overflow-hidden">
-            <CodeEditor value={text} onChange={onEdit} />
-            <div
-              ref={previewRef}
-              className="w-1/2 overflow-y-auto border-l border-stone-200 p-4 text-sm"
-            >
-              <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
-              {fenceMsg && <div className="mt-2 text-xs text-stone-500">{fenceMsg}</div>}
-              {preview !== null && (
-                <div className="mt-4 border-t border-stone-200 pt-2 text-xs text-stone-400">
-                  Previewing snapshot —{' '}
-                  <button
-                    className="underline"
-                    onClick={() => selected !== null && void onRestore(selected)}
-                    disabled={busy}
-                  >
-                    restore this version
-                  </button>
-                  <button className="ml-3 underline" onClick={() => setPreview(null)}>
-                    back to current
-                  </button>
-                </div>
-              )}
+        <main className="flex min-h-0 flex-1 flex-col">
+          {viewMode !== 'read' && (
+            <div className="flex flex-wrap items-center gap-1 border-b border-stone-200 px-2 py-1">
+              {toolbar.map(([label, run]) => (
+                <button
+                  key={label}
+                  onClick={run}
+                  className="rounded border border-stone-300 px-1.5 py-0.5 text-xs hover:bg-stone-100"
+                  title={String(label)}
+                >
+                  {label}
+                </button>
+              ))}
+              <label className="ml-auto flex items-center gap-1 text-xs text-stone-500">
+                <input
+                  type="checkbox"
+                  checked={typewriter}
+                  onChange={(e) => setTypewriter(e.target.checked)}
+                />
+                Typewriter
+              </label>
             </div>
+          )}
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            {viewMode !== 'read' && (
+              <div className={viewMode === 'split' ? 'w-1/2 min-w-0' : 'flex-1 min-w-0'}>
+                <CodeEditor
+                  key={`${activeDoc}:${theme}`}
+                  value={text}
+                  onChange={onEdit}
+                  apiRef={editorApiRef}
+                  typewriter={typewriter}
+                />
+              </div>
+            )}
+            {viewMode !== 'write' && (
+              <div
+                ref={previewRef}
+                className={
+                  viewMode === 'split'
+                    ? 'w-1/2 overflow-y-auto border-l border-stone-200 p-4 text-sm'
+                    : 'flex-1 overflow-y-auto p-4 text-sm'
+                }
+              >
+                <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                {fenceMsg && <div className="mt-2 text-xs text-stone-500">{fenceMsg}</div>}
+                {preview !== null && (
+                  <div className="mt-4 border-t border-stone-200 pt-2 text-xs text-stone-400">
+                    Previewing snapshot —{' '}
+                    <button
+                      className="underline"
+                      onClick={() => selected !== null && void onRestore(selected)}
+                      disabled={busy}
+                    >
+                      restore this version
+                    </button>
+                    <button className="ml-3 underline" onClick={() => setPreview(null)}>
+                      back to current
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+          <footer className="flex items-center gap-3 border-t border-stone-200 px-3 py-1 text-xs text-stone-400">
+            <span>
+              {words} words · {text.length} chars · {Math.max(1, Math.round(words / 200))} min read
+            </span>
+            <span className="ml-auto">{activeDoc}</span>
+            <span title={`${snaps.length} snapshots recorded`}>{snaps.length} snapshots</span>
+            <span title="Ctrl+S to save now">
+              {savedAt ? `saved ${new Date(savedAt).toLocaleTimeString()}` : 'unsaved'}
+            </span>
+          </footer>
         </main>
       </div>
+      {paletteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-24"
+          onClick={() => setPaletteOpen(false)}
+        >
+          <div
+            className="w-96 rounded-lg border border-stone-300 bg-white shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              autoFocus
+              value={paletteQuery}
+              onChange={(e) => setPaletteQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const first = paletteItems[0];
+                  if (first) {
+                    setPaletteOpen(false);
+                    first.run();
+                  }
+                } else if (e.key === 'Escape') {
+                  setPaletteOpen(false);
+                }
+              }}
+              placeholder="Commands or files…  (Ctrl+P)"
+              className="w-full rounded-t-lg border-b border-stone-200 px-3 py-2 text-sm outline-none"
+            />
+            <ul className="max-h-72 overflow-y-auto p-1 text-sm">
+              {paletteItems.map((c, i) => (
+                <li key={i}>
+                  <button
+                    className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-stone-100"
+                    onClick={() => {
+                      setPaletteOpen(false);
+                      c.run();
+                    }}
+                  >
+                    <span className="truncate">{c.label}</span>
+                    {c.hint && <span className="ml-3 shrink-0 text-xs text-stone-400">{c.hint}</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
