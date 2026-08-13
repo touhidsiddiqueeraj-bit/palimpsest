@@ -13,8 +13,8 @@ import { CodeEditor } from './CodeEditor';
 import { decorateFences, wireFenceButtons } from './fences';
 import { htmlToMarkdown } from './convert';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { mkdir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { appDataDir, join } from '@tauri-apps/api/path';
+import { mkdir, readDir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { appDataDir } from '@tauri-apps/api/path';
 import { createClient, inlineEdit, DEFAULT_PROVIDERS, isLocalUrl, type Provider } from '@palimpsest/ai';
 
 installNetGuard();
@@ -32,6 +32,11 @@ export default function App() {
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [docs, setDocs] = useState<string[]>([]);
+  const [activeDoc, setActiveDoc] = useState<string>('notes.md');
+  const [newDocName, setNewDocName] = useState('');
+  const wsRef = useRef<string | null>(null);
+  const docNamesRef = useRef(new Map<number, string>());
   const [fenceMsg, setFenceMsg] = useState<string | null>(null);
   const [proposal, setProposal] = useState<{
     proposed: string;
@@ -73,7 +78,8 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const workspace = await join(await appDataDir(), 'palimpsest-demo');
+        const workspace = await `${await appDataDir()}/palimpsest-demo`;
+        wsRef.current = workspace;
         const fs = snapshotFs(workspace);
         await mkdir(workspace, { recursive: true });
         const db = await sqliteDb(`${workspace}/index.db`);
@@ -81,14 +87,23 @@ export default function App() {
         await s.init();
         if (cancelled) return;
         setStore(s);
+        let t = INITIAL;
+        try {
+          t = await readTextFile(await `${workspace}/notes.md`);
+        } catch {
+          await writeTextFile(await `${workspace}/notes.md`, INITIAL);
+        }
         const doc = await s.getOrCreateDoc('notes.md', 'notes.md');
+        docNamesRef.current.set(doc.id, 'notes.md');
         const list = await s.list(doc.id);
         if (list.length === 0) {
-          await s.capture(doc.id, INITIAL, 'milestone', 'Chapter one');
-          await s.capture(doc.id, INITIAL, 'auto', 'seed');
+          await s.capture(doc.id, t, 'milestone', 'Chapter one');
+          await s.capture(doc.id, t, 'auto', 'seed');
         }
         setDocId(doc.id);
-        setText(INITIAL);
+        setText(t);
+        lastLen.current = t.length;
+        await loadDocs();
       } catch (e) {
         setErr(String(e));
       }
@@ -97,6 +112,54 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  const loadDocs = async () => {
+    if (!wsRef.current) return;
+    try {
+      const entries = await readDir(wsRef.current);
+      setDocs(entries.filter((e) => e.name.endsWith('.md')).map((e) => e.name).sort());
+    } catch {
+      /* workspace not ready */
+    }
+  };
+
+  const persistLive = (id: number, v: string) => {
+    const name = docNamesRef.current.get(id);
+    if (!name || !wsRef.current) return;
+    writeTextFile(`${wsRef.current}/${name}`, v).catch(() => {});
+  };
+
+  const openDoc = async (name: string) => {
+    if (!store || !wsRef.current) return;
+    let t = INITIAL;
+    try {
+      t = await readTextFile(`${wsRef.current}/${name}`);
+    } catch {
+      /* freshly created doc */
+    }
+    const doc = await store.getOrCreateDoc(name, name);
+    docNamesRef.current.set(doc.id, name);
+    lastLen.current = t.length;
+    setActiveDoc(name);
+    setSelected(null);
+    setPreview(null);
+    setDocId(doc.id);
+    setText(t);
+    await refreshSnaps(doc.id);
+  };
+
+  const createDoc = async () => {
+    const raw = newDocName.trim();
+    if (!raw || !store || !wsRef.current) return;
+    let name = raw.endsWith('.md') ? raw : `${raw}.md`;
+    if (name.includes('/')) name = name.split('/').pop() ?? name;
+    const exists = await readTextFile(`${wsRef.current}/${name}`).catch(() => null);
+    setNewDocName('');
+    if (exists !== null) return openDoc(name);
+    await writeTextFile(`${wsRef.current}/${name}`, INITIAL);
+    await openDoc(name);
+    await loadDocs();
+  };
 
   const refreshSnaps = async (id: number) => {
     if (!store) return;
@@ -116,6 +179,7 @@ export default function App() {
       const churn = Math.abs(text.length - lastLen.current);
       if (snapshotDue(Date.now(), INITIAL_TS, churn)) {
         await store.capture(docId, text, 'auto', 'auto');
+        persistLive(docId, text);
         lastLen.current = text.length;
         await refreshSnaps(docId);
       }
@@ -179,6 +243,7 @@ export default function App() {
         instruction: proposal.instruction,
       });
       setText(proposal.proposed);
+      persistLive(docId, proposal.proposed);
       setProposal(null);
       setPrompt('');
       await refreshSnaps(docId);
@@ -231,6 +296,7 @@ export default function App() {
         lastLen.current = v.length;
         await refreshSnaps(docId);
       }
+      persistLive(docId ?? -1, v);
     }, 2500);
   };
 
@@ -240,6 +306,7 @@ export default function App() {
     try {
       const r = await store.restore(docId, id, text, 'Manual restore');
       setText(r.text);
+      persistLive(docId, r.text);
       setPreview(null);
       await refreshSnaps(docId);
     } finally {
@@ -339,7 +406,7 @@ export default function App() {
     <div className="flex h-screen flex-col">
       <header className="flex items-center gap-4 border-b border-stone-200 px-4 py-2 text-sm">
         <h1 className="font-semibold">Palimpsest</h1>
-        <span className="text-stone-500">notes.md</span>
+        <span className="text-stone-500">{activeDoc}</span>
         <span className="text-stone-400">
           · {diffWords.removed} removed, {diffWords.added} added vs v0
         </span>
@@ -375,6 +442,43 @@ export default function App() {
         </div>
       </header>
       <div className="flex flex-1 overflow-hidden">
+        <aside className="w-44 shrink-0 overflow-y-auto border-r border-stone-200 p-3 text-sm">
+          <h2 className="mb-2 font-semibold">Docs</h2>
+          <ul className="space-y-1">
+            {docs.map((d) => (
+              <li key={d}>
+                <button
+                  onClick={() => void openDoc(d)}
+                  className={
+                    activeDoc === d
+                      ? 'w-full rounded bg-stone-200 px-2 py-1 text-left'
+                      : 'w-full rounded px-2 py-1 text-left hover:bg-stone-100'
+                  }
+                >
+                  {d}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex gap-1">
+            <input
+              value={newDocName}
+              onChange={(e) => setNewDocName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void createDoc();
+              }}
+              placeholder="new file"
+              className="w-full min-w-0 rounded border border-stone-300 px-1.5 py-0.5 text-xs"
+            />
+            <button
+              onClick={() => void createDoc()}
+              className="rounded border border-stone-300 px-2 text-xs hover:bg-stone-100"
+              title="New document"
+            >
+              +
+            </button>
+          </div>
+        </aside>
         <aside className="w-80 overflow-y-auto border-r border-stone-200 p-3 text-sm">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="font-semibold">History</h2>
