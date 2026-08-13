@@ -52,3 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Desktop "Ask AI" panel: propose → review diff counts → accept/reject;
   accepting captures an `ai` snapshot recording model + instruction
   (auto-milestone per product law 4).
+- Chat tab: "recall recent writing" injects status-annotated history context
+  from `store.recall`, answers stream into the panel; per-session usage meter.
+- MCP server package (`packages/mcp`): capability-layer tools (recall,
+  get_outline, get_document, get_stats, create_milestone, restore_version,
+  apply_edit) over the same core API as the UI — no duplicated logic. Every
+  response carries `tokens_used`; every mutator accepts `dry_run`. stdio
+  transport via `createMcpServer()` / `runStdioServer()`.
+- Conformance suite (vitest 4): 7 tests green in CI gate.
