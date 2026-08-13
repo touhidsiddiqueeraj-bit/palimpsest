@@ -45,3 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diagram code fences (ditaa, mermaid, …) render to SVG on demand via kroki —
   requests flow through the netguard so Local-only blocks them visibly.
 - Import/export: regex HTML↔markdown (`Alt+L` export, `Ctrl+Shift+I` import).
+- BYOK AI package: provider registry (Ollama / LM Studio / OpenAI-compatible),
+  protocol adapters, client-level Local-only gate; keys sent only to remote
+  providers. `inlineEdit` proposes a full document and returns a word diff —
+  the AI never writes.
+- Desktop "Ask AI" panel: propose → review diff counts → accept/reject;
+  accepting captures an `ai` snapshot recording model + instruction
+  (auto-milestone per product law 4).
