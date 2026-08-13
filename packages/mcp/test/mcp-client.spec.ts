@@ -76,9 +76,9 @@ describe('mcp client (allowlist + audit)', () => {
     );
     await client.connect();
     const r = await client.call<{ results: Array<{ status: string }> }>('recall', { query: 'fox' });
-    expect(r.results[0].status).toBe('current');
+    expect(r.results[0]?.status).toBe('current');
     expect(lines.length).toBe(1);
-    expect(JSON.parse(lines[0])).toMatchObject({ tool: 'recall', ok: true });
+    expect(JSON.parse(lines[0] ?? '')).toMatchObject({ tool: 'recall', ok: true });
     await client.close();
   });
 
@@ -90,7 +90,7 @@ describe('mcp client (allowlist + audit)', () => {
     });
     await client.connect();
     await expect(client.call('restore_version', { snapshot_id: 1 })).rejects.toThrow(/allowlist/);
-    expect(JSON.parse(lines[0])).toMatchObject({ tool: 'restore_version', denied: true });
+    expect(JSON.parse(lines[0] ?? '')).toMatchObject({ tool: 'restore_version', denied: true });
     await client.close();
   });
 });
