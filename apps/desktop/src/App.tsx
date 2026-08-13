@@ -14,7 +14,7 @@ import { decorateFences, wireFenceButtons } from './fences';
 import { htmlToMarkdown } from './convert';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { mkdir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { createClient, inlineEdit, DEFAULT_PROVIDERS, type Provider } from '@palimpsest/ai';
+import { createClient, inlineEdit, DEFAULT_PROVIDERS, isLocalUrl, type Provider } from '@palimpsest/ai';
 
 installNetGuard();
 
@@ -48,6 +48,18 @@ export default function App() {
   const [chatBusy, setChatBusy] = useState(false);
   const [usage, setUsage] = useState(0);
   const [tab, setTab] = useState<'edit' | 'chat'>('edit');
+  const [aiCfg, setAiCfg] = useState<{ baseUrl: string; model: string }>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('palimpsest.ai') ?? '') as {
+        baseUrl: string;
+        model: string;
+      };
+    } catch {
+      return { baseUrl: DEFAULT_PROVIDERS[0]!.baseUrl, model: DEFAULT_PROVIDERS[0]!.model };
+    }
+  });
+  const [aiKey, setAiKey] = useState('');
+  const [showAiCfg, setShowAiCfg] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
   const snapshotTimer = useRef<number | null>(null);
   const lastLen = useRef(INITIAL.length);
@@ -111,10 +123,25 @@ export default function App() {
   }, [store, docId, text]);
 
   const provider: Provider = {
-    id: 'ollama-default',
-    kind: DEFAULT_PROVIDERS[0]!.kind,
-    baseUrl: DEFAULT_PROVIDERS[0]!.baseUrl,
-    model: DEFAULT_PROVIDERS[0]!.model,
+    id: aiCfg.baseUrl,
+    kind: isLocalUrl(aiCfg.baseUrl) ? 'ollama' : 'openai',
+    baseUrl: aiCfg.baseUrl,
+    model: aiCfg.model,
+    apiKey: aiKey || undefined,
+  };
+
+  const friendlyAiError = (e: unknown) => {
+    const s = String(e);
+    return /refused|ECONNREFUSED|Failed to fetch|network|NetworkError/i.test(s)
+      ? `Can't reach ${aiCfg.baseUrl}. Start a local model server (Ollama / LM Studio), or open AI settings and enter another address${isLocalUrl(aiCfg.baseUrl) || aiKey ? '' : ' and API key'}. (${s})`
+      : s.startsWith('Propose failed:')
+        ? s
+        : s;
+  };
+
+  const saveAiCfg = () => {
+    localStorage.setItem('palimpsest.ai', JSON.stringify(aiCfg));
+    setShowAiCfg(false);
   };
 
   const onPropose = async () => {
@@ -136,7 +163,7 @@ export default function App() {
         model: provider.model,
       });
     } catch (e) {
-      setAiMsg(`Propose failed: ${String(e)}`);
+      setAiMsg(friendlyAiError(e));
     } finally {
       setAiBusy(false);
     }
@@ -187,7 +214,7 @@ export default function App() {
       setChat((c) => [...c, { role: 'assistant', content: answer }]);
       setUsage((u) => u + q.length + answer.length);
     } catch (e) {
-      setChat((c) => [...c, { role: 'assistant', content: `Error: ${String(e)}` }]);
+      setChat((c) => [...c, { role: 'assistant', content: `Error: ${friendlyAiError(e)}` }]);
     } finally {
       setChatBusy(false);
     }
@@ -417,11 +444,70 @@ export default function App() {
             </div>
             {tab === 'edit' ? (
               <>
-                <h2 className="mb-1 font-semibold">Ask AI</h2>
+                <h2 className="mb-1 font-semibold">
+                  Ask AI
+                  <button
+                    className="ml-2 rounded border border-stone-300 px-1.5 py-0.5 text-[10px] font-normal hover:bg-stone-100"
+                    onClick={() => setShowAiCfg((v) => !v)}
+                  >
+                    {showAiCfg ? 'Done' : 'Settings'}
+                  </button>
+                </h2>
+                {showAiCfg ? (
+                  <div className="mb-2 rounded border border-stone-300 p-2 text-xs">
+                    <label className="block">
+                      <span className="text-stone-500">Server URL</span>
+                      <input
+                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none focus:border-stone-500"
+                        value={aiCfg.baseUrl}
+                        onChange={(e) => setAiCfg((c) => ({ ...c, baseUrl: e.target.value }))}
+                        placeholder="http://127.0.0.1:11434 (Ollama) or https://…/v1"
+                      />
+                    </label>
+                    <label className="mt-1 block">
+                      <span className="text-stone-500">Model</span>
+                      <input
+                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none focus:border-stone-500"
+                        value={aiCfg.model}
+                        onChange={(e) => setAiCfg((c) => ({ ...c, model: e.target.value }))}
+                        placeholder="llama3.2 / gpt-4o-mini / local-model"
+                      />
+                    </label>
+                    <label className="mt-1 block">
+                      <span className="text-stone-500">
+                        API key {isLocalUrl(aiCfg.baseUrl) ? '(not needed for local servers)' : ''}
+                      </span>
+                      <input
+                        type="password"
+                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none focus:border-stone-500"
+                        value={aiKey}
+                        onChange={(e) => setAiKey(e.target.value)}
+                        placeholder={isLocalUrl(aiCfg.baseUrl) ? 'leave empty' : 'sk-…'}
+                      />
+                    </label>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        className="rounded bg-stone-900 px-2 py-1 text-white hover:bg-stone-700"
+                        onClick={saveAiCfg}
+                      >
+                        Save
+                      </button>
+                      <span className="text-[10px] text-stone-400">
+                        URL & model stay on this device; the key is kept in memory for this
+                        session only and never written to disk.
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <span className="mb-1 block text-[10px] text-stone-400">
+                    {aiCfg.baseUrl} · {aiCfg.model}
+                    {aiKey ? ' · key set (memory only)' : ''}
+                  </span>
+                )}
                 <textarea
                   className="w-full resize-none rounded border border-stone-300 p-2 text-xs outline-none focus:border-stone-500"
                   rows={3}
-                  placeholder={`Ollama · ${provider.model} — edit instruction`}
+                  placeholder={`Ask AI · ${provider.model} — edit instruction`}
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                 />
@@ -477,7 +563,7 @@ export default function App() {
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && void onSend()}
-                    placeholder={`Ask Ollama · ${provider.model}`}
+                    placeholder={`Ask AI · ${provider.model}`}
                   />
                   <button
                     className="rounded bg-stone-900 px-2 py-1 text-xs text-white hover:bg-stone-700 disabled:opacity-50"
