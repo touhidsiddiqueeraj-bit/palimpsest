@@ -12,6 +12,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src"
   },
+  "dependencies": {
+    "@palimpsest/core": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"

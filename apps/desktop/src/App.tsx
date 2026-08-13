@@ -14,6 +14,7 @@ import { decorateFences, wireFenceButtons } from './fences';
 import { htmlToMarkdown } from './convert';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { createClient, inlineEdit, DEFAULT_PROVIDERS, type Provider } from '@palimpsest/ai';
 
 installNetGuard();
 
@@ -32,12 +33,24 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [fenceMsg, setFenceMsg] = useState<string | null>(null);
+  const [proposal, setProposal] = useState<{
+    proposed: string;
+    added: number;
+    removed: number;
+    instruction: string;
+    model: string;
+  } | null>(null);
+  const [prompt, setPrompt] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMsg, setAiMsg] = useState<string | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const snapshotTimer = useRef<number | null>(null);
   const lastLen = useRef(INITIAL.length);
 
   const net = useNetActivity();
   const localOnly = useLocalOnly();
+  const localOnlyRef = useRef(localOnly);
+  localOnlyRef.current = localOnly;
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +103,55 @@ export default function App() {
     }, 5000);
     return () => window.clearInterval(t);
   }, [store, docId, text]);
+
+  const provider: Provider = {
+    id: 'ollama-default',
+    kind: DEFAULT_PROVIDERS[0]!.kind,
+    baseUrl: DEFAULT_PROVIDERS[0]!.baseUrl,
+    model: DEFAULT_PROVIDERS[0]!.model,
+  };
+
+  const onPropose = async () => {
+    if (!docId || !prompt.trim() || aiBusy) return;
+    setAiBusy(true);
+    setAiMsg(null);
+    try {
+      const client = createClient(provider, { localOnly: localOnlyRef.current });
+      const { proposed, diff } = await inlineEdit({
+        client,
+        instruction: prompt.trim(),
+        document: text,
+      });
+      setProposal({
+        proposed,
+        added: diff.added,
+        removed: diff.removed,
+        instruction: prompt.trim(),
+        model: provider.model,
+      });
+    } catch (e) {
+      setAiMsg(`Propose failed: ${String(e)}`);
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const onAccept = async () => {
+    if (!store || docId === null || !proposal) return;
+    setBusy(true);
+    try {
+      await store.capture(docId, proposal.proposed, 'ai', proposal.instruction, {
+        model: proposal.model,
+        instruction: proposal.instruction,
+      });
+      setText(proposal.proposed);
+      setProposal(null);
+      setPrompt('');
+      await refreshSnaps(docId);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const onEdit = (v: string) => {
     setText(v);
@@ -301,6 +363,43 @@ export default function App() {
               </li>
             ))}
           </ul>
+          <div className="mt-4 border-t border-stone-200 pt-3">
+            <h2 className="mb-1 font-semibold">Ask AI</h2>
+            <textarea
+              className="w-full resize-none rounded border border-stone-300 p-2 text-xs outline-none focus:border-stone-500"
+              rows={3}
+              placeholder={`Ollama · ${provider.model} — edit instruction`}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+            />
+            <div className="mt-1 flex gap-2">
+              <button
+                className="rounded bg-stone-900 px-2 py-1 text-xs text-white hover:bg-stone-700 disabled:opacity-50"
+                onClick={() => void onPropose()}
+                disabled={aiBusy || !prompt.trim()}
+              >
+                {aiBusy ? 'Proposing…' : localOnly ? 'Propose (local)' : 'Propose'}
+              </button>
+              {proposal && (
+                <>
+                  <button
+                    className="rounded bg-emerald-700 px-2 py-1 text-xs text-white hover:bg-emerald-600"
+                    onClick={() => void onAccept()}
+                    disabled={busy}
+                  >
+                    Accept +{proposal.added} −{proposal.removed}
+                  </button>
+                  <button
+                    className="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+                    onClick={() => setProposal(null)}
+                  >
+                    Reject
+                  </button>
+                </>
+              )}
+            </div>
+            {aiMsg && <div className="mt-1 text-xs text-red-600">{aiMsg}</div>}
+          </div>
         </aside>
         <main className="flex flex-1 flex-col">
           <div className="flex flex-1 overflow-hidden">
