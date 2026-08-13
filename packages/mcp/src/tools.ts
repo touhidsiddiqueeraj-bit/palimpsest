@@ -104,19 +104,34 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'get_stats',
-    description: 'Workspace statistics: documents, snapshots, archive, db size.',
-    inputSchema: { type: 'object', properties: {} },
-    async run(_args, ctx) {
-      const { text } = await currentText(ctx, ctx.ai ? 'notes.md' : 'notes.md');
-      const doc = await ctx.store.resolveDoc('notes.md');
-      const s = await ctx.store.stats(doc.id, text);
-      return {
-        document: 'notes.md',
-        words: s.words,
-        chars: s.chars,
-        snapshots: s.snapshotCount,
-        tokens_used: tokens(text),
+    description:
+      'Statistics for a document (default: notes.md, else the first registered document).',
+    inputSchema: {
+      type: 'object',
+      properties: { doc: { type: 'string', description: 'Document name' } },
+    },
+    async run(args, ctx) {
+      const requested = String(args.doc ?? 'notes.md');
+      const pick = async (name: string) => {
+        const { text } = await currentText(ctx, name);
+        const doc = await ctx.store.resolveDoc(name);
+        const s = await ctx.store.stats(doc.id, text);
+        return {
+          document: name,
+          words: s.words,
+          chars: s.chars,
+          snapshots: s.snapshotCount,
+          tokens_used: tokens(text),
+        };
       };
+      try {
+        return await pick(requested);
+      } catch {
+        // fall back to the first .md in the workspace root
+        const { readdir } = await import('node:fs/promises');
+        const first = (await readdir(ctx.workspace)).find((f) => f.endsWith('.md'));
+        return pick(first ?? requested);
+      }
     },
   },
   {

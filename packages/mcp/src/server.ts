@@ -53,12 +53,22 @@ export async function runStdioServer(ctx: McpContext): Promise<void> {
 
 /** Runs an MCP server over HTTP (Streamable HTTP transport, no external deps). */
 export async function runHttpServer(ctx: McpContext, port = 3000): Promise<Server> {
-  const server = createMcpServer(ctx);
-  const transport = new StreamableHTTPServerTransport({});
   const http = createHttpServer((req, res) => {
-    void transport.handleRequest(req, res);
+    // stateless mode: fresh server + transport per request (SDK session state
+    // breaks when one transport instance handles more than one request)
+    const server = createMcpServer(ctx);
+    const transport = new StreamableHTTPServerTransport({});
+    void (async () => {
+      try {
+        await server.connect(transport);
+        await transport.handleRequest(req, res);
+      } catch (err) {
+        console.error('palimpsest mcp http error:', err);
+        if (!res.headersSent) res.writeHead(500);
+        res.end();
+      }
+    })();
   });
-  await server.connect(transport);
   await new Promise<void>((resolve) => http.listen(port, resolve));
   return http;
 }
