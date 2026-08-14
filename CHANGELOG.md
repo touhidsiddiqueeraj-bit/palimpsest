@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MCP: `create_doc` tool — create a `.md` file in the workspace, register it
+  with history, and seed its first snapshot. Idempotent (returns the existing
+  doc on a name collision); no AI provider required. Missing-document errors
+  now point at `create_doc`.
+- MCP CLI: `--help` / `--version` flags (previously swallowed — the stdio
+  server started and blocked, so `--help` hung). Declared `esbuild` as a
+  devDependency (build script referenced it but it was never installed).
 - Full project documentation: `README.md` (features, media, MCP setup),
   `docs/ARCHITECTURE.md` (capability layer, file-first storage, MCP spine),
   `docs/VERIFICATION.md` (reproducible live proof: stdio, HTTP, opencode),

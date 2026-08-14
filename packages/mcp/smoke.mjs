@@ -1,11 +1,12 @@
 /* Manual smoke: spawn the real CLI and drive it like an agent would. */
-import { McpClient } from './src/client.js';
+import { McpClient } from './src/client.ts';
 
 const ALL = [
   'recall',
   'get_outline',
   'get_document',
   'get_stats',
+  'create_doc',
   'create_milestone',
   'restore_version',
   'apply_edit',
@@ -53,6 +54,11 @@ const main = async () => {
     dry_run: true,
   });
   ok('restore dry_run', restore.dry_run === true, JSON.stringify(restore));
+
+  const made = await client.call('create_doc', { doc: 'smoke-new.md' });
+  ok('create_doc', made.created === true && Number(made.doc_id) > 0, JSON.stringify(made));
+  const again = await client.call('create_doc', { doc: 'smoke-new.md' });
+  ok('create_doc idempotent', again.created === false, JSON.stringify(again));
 
   const aiError = String(
     await client.call('apply_edit', { doc: 'notes.md', instruction: 'tweak', dry_run: true }),

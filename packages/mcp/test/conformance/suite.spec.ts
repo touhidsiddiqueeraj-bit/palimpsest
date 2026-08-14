@@ -101,10 +101,46 @@ describe('conformance (MCP server tools)', () => {
       'get_outline',
       'get_document',
       'get_stats',
+      'create_doc',
       'create_milestone',
       'restore_version',
       'apply_edit',
     ]);
+  });
+
+  it('create_doc writes the file, registers the doc, and is idempotent', async () => {
+    const made = (await call('create_doc', { doc: 'fresh.md' })) as {
+      created: boolean;
+      doc_id: number;
+    };
+    expect(made.created).toBe(true);
+    expect(made.doc_id).toBeGreaterThan(0);
+    const text = await readFile(join(ws, 'fresh.md'), 'utf8');
+    expect(text).toContain('# fresh');
+    const again = (await call('create_doc', { doc: 'fresh.md' })) as {
+      created: boolean;
+      doc_id: number;
+    };
+    expect(again.created).toBe(false);
+    expect(again.doc_id).toBe(made.doc_id);
+    const seeded = await store.list(made.doc_id);
+    expect(seeded.length).toBe(1);
+    expect(seeded[0]!.kind).toBe('auto');
+
+    const custom = (await call('create_doc', {
+      doc: 'custom',
+      content: '# Custom\n\nBody.\n',
+    })) as {
+      created: boolean;
+    };
+    expect(custom.created).toBe(true);
+    expect(await readFile(join(ws, 'custom.md'), 'utf8')).toBe('# Custom\n\nBody.\n');
+  });
+
+  it('create_doc rejects unsafe names and missing docs hint at create_doc', async () => {
+    await expect(call('create_doc', { doc: '../escape.md' })).rejects.toThrow(/invalid document/);
+    await expect(call('create_doc', { doc: '/abs/olute.md' })).rejects.toThrow(/invalid document/);
+    await expect(call('get_document', { doc: 'nope.md' })).rejects.toThrow(/create_doc/);
   });
 
   it('recall returns superseded text, annotated with its status', async () => {

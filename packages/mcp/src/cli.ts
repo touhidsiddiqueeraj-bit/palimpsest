@@ -108,7 +108,36 @@ async function bootstrap(store: ReturnType<typeof createHistoryStore>, ws: strin
   }
 }
 
+const USAGE = `palimpsest — MCP server for a markdown workspace
+
+Usage:
+  node cli.cjs [--workspace <dir>] [--port <n>]   run the MCP server (stdio; HTTP when --port)
+  node cli.cjs --help                             this help
+  node cli.cjs --version                          version
+
+Options:
+  --workspace <dir>   workspace root (default: current directory; every existing
+                      .md file is registered with history at startup)
+  --port <n>          serve over HTTP on this port instead of stdio
+
+Env:
+  PALIMPSEST_PROVIDER_URL   LLM base URL -> enables apply_edit
+  PALIMPSEST_MODEL          model id (default: provider default)
+  PALIMPSEST_LOCAL_ONLY     '0' disables the local-only AI gate (default on)
+
+New documents: create empty .md files in the workspace, or call the MCP
+create_doc tool — no AI provider is needed for either.
+`;
+
 export async function main(argv: string[]): Promise<void> {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(USAGE);
+    return;
+  }
+  if (argv.includes('--version') || argv.includes('-v')) {
+    console.log('palimpsest 0.1.0');
+    return;
+  }
   const args = new Map<string, string>();
   for (let i = 0; i < argv.length; i++) {
     if (argv[i]?.startsWith('--')) args.set(argv[i]!.slice(2), argv[i + 1] ?? '');

@@ -63,6 +63,7 @@ Tauri 2 (Rust) + React 18 (strict) + TypeScript (strict) + Vite + Tailwind; Code
 | `recall`           | ✓    |       | headline; budget-aware; D-shaped bundle                   |
 | `get_outline`      | ✓    |       | heading tree, list counts, links, words/section           |
 | `apply_edit`       |      | ✓     | diff-only; preview + confirm; auto-ai-milestone on accept |
+| `create_doc`       |      | ✓     | create .md + register; idempotent; no AI needed           |
 | `create_milestone` |      | ✓     | label + optional note                                     |
 | `restore_version`  |      | ✓     | preview diff; confirm; system-before + milestone-after    |
 | `export`           |      | ✓     | to disk, dry-run for preview                              |

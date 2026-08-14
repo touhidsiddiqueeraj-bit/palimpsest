@@ -29,9 +29,14 @@ async function currentText(
   ctx: McpContext,
   docName: string,
 ): Promise<{ text: string; path: string }> {
-  const doc = await ctx.store.resolveDoc(docName);
+  const doc = await ctx.store.resolveDoc(docName).catch(() => null);
+  if (!doc) throw new Error(`document not found: ${docName} (create it with create_doc)`);
   const path = join(ctx.workspace, doc.path ?? `${doc.name}`);
-  return { text: await readFile(path, 'utf8'), path };
+  try {
+    return { text: await readFile(path, 'utf8'), path };
+  } catch {
+    throw new Error(`document not found: ${docName} (create it with create_doc)`);
+  }
 }
 
 async function writeCurrent(ctx: McpContext, docName: string, text: string): Promise<void> {
@@ -132,6 +137,46 @@ export const TOOLS: ToolDef[] = [
         const first = (await readdir(ctx.workspace)).find((f) => f.endsWith('.md'));
         return pick(first ?? requested);
       }
+    },
+  },
+  {
+    name: 'create_doc',
+    description:
+      'Create a new document (.md file in the workspace) and register it with history. Idempotent: returns the existing document if the name is already taken.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        doc: { type: 'string', description: 'Document name, e.g. "notes.md"' },
+        content: {
+          type: 'string',
+          description: 'Optional initial text (default: a title heading)',
+        },
+      },
+      required: ['doc'],
+    },
+    async run(args, ctx) {
+      const name = String(args.doc);
+      if (!name || name.includes('..') || name.startsWith('/') || name.includes('\\')) {
+        throw new Error(`invalid document name: ${name}`);
+      }
+      const fileName = name.endsWith('.md') ? name : `${name}.md`;
+      const path = join(ctx.workspace, fileName);
+      const { writeFile } = await import('node:fs/promises');
+      try {
+        await readFile(path, 'utf8');
+        const doc = await ctx.store.getOrCreateDoc(fileName, fileName);
+        return { created: false, doc_id: doc.id, document: doc.name };
+      } catch {
+        // file does not exist yet — fall through and create it
+      }
+      const raw = String(args.content ?? '');
+      const text = raw.trim()
+        ? raw
+        : `# ${fileName.replace(/\.md$/, '')}\n\nStart writing.\n`;
+      await writeFile(path, text);
+      const doc = await ctx.store.getOrCreateDoc(fileName, fileName);
+      await ctx.store.capture(doc.id, text, 'auto', 'seed');
+      return { created: true, doc_id: doc.id, document: doc.name };
     },
   },
   {

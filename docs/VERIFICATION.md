@@ -108,6 +108,6 @@ pnpm install
 pnpm --filter @palimpsest/mcp build:cli        # bundles dist/cli.cjs
 pnpm test                                      # unit + conformance gates
 pnpm exec prettier -c . && pnpm lint && pnpm typecheck
-node packages/mcp/smoke.mjs                    # needs dist/cli.cjs on disk (bundles first)
+node --experimental-transform-types packages/mcp/smoke.mjs  # needs dist/cli.cjs on disk (bundles first)
 # HTTP: node packages/mcp/dist/cli.cjs --workspace <dir> --port 3000
 ```
