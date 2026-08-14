@@ -40,7 +40,7 @@ PASS recall                status "current" · snippet "…First notes for the [
 PASS milestone dry_run     {"dry_run":true,"snapshot":"# Alpha…","tokens_used":13}
 PASS milestone real        {"snapshot_id":1786619923052,"tokens_used":13}
 PASS restore dry_run       {"dry_run":true,"diff":{"added":0,"removed":0},"tokens_used":26}
-PASS apply_edit guards     apply_edit: no AI provider configured   ← no silent AI writes, by design
+PASS apply_edit guards     apply_edit: no local AI provider configured (local-only is on). Set PALIMPSEST_P…   ← no silent AI writes, by design
 SMOKE OK
 ```
 
@@ -97,9 +97,12 @@ setting, not a code issue.
   docs remain plain `.md` readable by any tool.
 - Keys never appear in logs or the audit file; audit lines record
   `{ts, source, tool, args, ok|denied}` only.
-- With no BYOK provider configured, `apply_edit` returns
-  `apply_edit: no AI provider configured` and writes nothing — verified in
-  §2 (the "guards" test).
+- With no BYOK provider configured and local-only on (default), `apply_edit` returns
+  `apply_edit: no local AI provider configured (local-only is on). Set
+PALIMPSEST_PROVIDER_URL to a local model, or turn local-only off and pass
+content.` and writes nothing — verified in §2 (the "guards" test). With
+  local-only off, `apply_edit` applies agent-supplied `content` and records a
+  before-snapshot plus milestone (conformance suite).
 
 ## Reproduce
 

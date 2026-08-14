@@ -111,11 +111,14 @@ workspace of `.md` files:
 The server boots by indexing the workspace: every `.md` file gets a first
 snapshot (the file itself stays the source of truth — `.palimpsest/` lives
 alongside it, and a bare git repo of plain `.md` files remains fully
-readable). No AI provider is required for history features; `apply_edit`
-guards loudly when no BYOK provider is configured rather than writing
-anything silently.
+readable). No AI provider is required for history features. `apply_edit`
+needs a local provider while local-only is on (default); with local-only off
+(`PALIMPSEST_LOCAL_ONLY=0`) it runs against any configured provider, or
+applies agent-supplied `content` directly — every edit is captured as a
+before-snapshot plus a milestone, never a silent write.
 
-To build the CLI bundle: `pnpm --filter @palimpsest/mcp build:cli`.
+Install the CLI on your PATH (Node 22+, rebuild-safe via `prepare`):
+`cd packages/mcp && pnpm link --global` — then `palimpsest --help`.
 
 ## BYOK setup
 

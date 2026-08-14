@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
+  "bin": {
+    "palimpsest": "./dist/cli.cjs"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
@@ -11,6 +14,7 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
+    "prepare": "pnpm build:cli",
     "build:cli": "esbuild src/cli.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/cli.cjs --external:node:*"
   },
   "dependencies": {

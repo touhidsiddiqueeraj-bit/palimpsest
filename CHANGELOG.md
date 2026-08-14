@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MCP: `apply_edit` agent-supplied path — with local-only off
+  (`PALIMPSEST_LOCAL_ONLY=0`) and no provider URL, the tool accepts a full
+  `content` replacement: the word diff is computed, a before-snapshot is
+  captured, and a milestone records `model: "agent"` + instruction. While
+  local-only is on, `apply_edit` requires a local provider and refuses with
+  an actionable message.
+- MCP CLI: `localOnly` is now wired from `PALIMPSEST_LOCAL_ONLY` (was
+  hardcoded on); `--help` documents the toggle and `apply_edit` semantics.
+- MCP CLI: published as `palimpsest` on PATH via a `bin` field +
+  `pnpm link --global` (rebuild-safe through a `prepare` script).
+- MCP: `create_doc` overwrite — `content` on an existing document requires
+  `overwrite:true`, which snapshots the current state before replacing it
+  (no more silent `created:false` for agents).
 - MCP: `create_doc` tool — create a `.md` file in the workspace, register it
   with history, and seed its first snapshot. Idempotent (returns the existing
   doc on a name collision); no AI provider required. Missing-document errors

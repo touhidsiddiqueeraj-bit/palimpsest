@@ -61,13 +61,16 @@ function demoFs(root: string): SnapshotFs {
 
 let ws: string;
 let ctx: McpContext;
+let openCtx: McpContext;
 let v1Id: number;
 let store: HistoryStore;
 
-const call = (name: string, args: Record<string, unknown> = {}) => {
+const call = (name: string, args: Record<string, unknown> = {}) => callWith(name, args, ctx);
+
+const callWith = (name: string, args: Record<string, unknown> = {}, c: McpContext) => {
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) throw new Error(`no tool ${name}`);
-  return tool.run(args, ctx);
+  return tool.run(args, c);
 };
 
 beforeAll(async () => {
@@ -88,6 +91,7 @@ beforeAll(async () => {
   await store.capture(doc.id, '# Alpha\n\nThe lazy dog sleeps.\n', 'milestone', 'v2');
   v1Id = v1.id;
   ctx = { store, workspace: ws, localOnly: true };
+  openCtx = { store, workspace: ws, localOnly: false };
 });
 
 afterAll(async () => {
@@ -141,6 +145,63 @@ describe('conformance (MCP server tools)', () => {
     await expect(call('create_doc', { doc: '../escape.md' })).rejects.toThrow(/invalid document/);
     await expect(call('create_doc', { doc: '/abs/olute.md' })).rejects.toThrow(/invalid document/);
     await expect(call('get_document', { doc: 'nope.md' })).rejects.toThrow(/create_doc/);
+  });
+
+  it('create_doc overwrites only with the flag, capture-first', async () => {
+    await writeFile(join(ws, 'over.md'), '# Old\n');
+    await expect(call('create_doc', { doc: 'over.md', content: '# New\n' })).rejects.toThrow(
+      /overwrite:true/,
+    );
+    expect(await readFile(join(ws, 'over.md'), 'utf8')).toBe('# Old\n');
+    const r = (await call('create_doc', {
+      doc: 'over.md',
+      content: '# New\n',
+      overwrite: true,
+    })) as { overwritten: boolean; pre_edit_snapshot_id: number };
+    expect(r.overwritten).toBe(true);
+    expect(r.pre_edit_snapshot_id).toBeGreaterThan(0);
+    expect(await readFile(join(ws, 'over.md'), 'utf8')).toBe('# New\n');
+    const doc = await store.getOrCreateDoc('over.md', 'over.md');
+    const pre = await store.get(doc.id, r.pre_edit_snapshot_id);
+    expect(pre.text).toBe('# Old\n');
+  });
+
+  it('apply_edit with local-only on and no provider refuses with a hint', async () => {
+    await expect(
+      call('apply_edit', { doc: 'notes.md', instruction: 'x', dry_run: true }),
+    ).rejects.toThrow(/local AI provider configured/);
+  });
+
+  it('apply_edit agent-supplied content (local-only off): diff + pre-snapshot + milestone', async () => {
+    const beforeText = await readFile(join(ws, 'notes.md'), 'utf8');
+    const dry = (await callWith(
+      'apply_edit',
+      { doc: 'notes.md', instruction: 'rewrite', content: '# Agent\n\nNew body.\n', dry_run: true },
+      openCtx,
+    )) as { dry_run: boolean; added: number };
+    expect(dry.dry_run).toBe(true);
+    expect(dry.added).toBeGreaterThan(0);
+    expect(await readFile(join(ws, 'notes.md'), 'utf8')).toBe(beforeText);
+    const real = (await callWith(
+      'apply_edit',
+      { doc: 'notes.md', instruction: 'rewrite', content: '# Agent\n\nNew body.\n' },
+      openCtx,
+    )) as { pre_edit_snapshot_id: number; milestone_id: number; added: number };
+    expect(real.pre_edit_snapshot_id).toBeGreaterThan(0);
+    expect(real.milestone_id).toBeGreaterThan(0);
+    expect(real.added).toBeGreaterThan(0);
+    expect(await readFile(join(ws, 'notes.md'), 'utf8')).toContain('# Agent');
+    const doc = await store.resolveDoc('notes.md');
+    const pre = await store.get(doc.id, real.pre_edit_snapshot_id);
+    expect(pre.text).toBe(beforeText);
+    const milestone = await store.get(doc.id, real.milestone_id);
+    expect(milestone.kind).toBe('ai');
+  });
+
+  it('apply_edit local-only off, no provider, no content: names both options', async () => {
+    await expect(
+      callWith('apply_edit', { doc: 'notes.md', instruction: 'x', dry_run: true }, openCtx),
+    ).rejects.toThrow(/PALIMPSEST_PROVIDER_URL.*content|content.*PALIMPSEST_PROVIDER_URL/);
   });
 
   it('recall returns superseded text, annotated with its status', async () => {

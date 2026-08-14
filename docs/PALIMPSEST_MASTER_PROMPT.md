@@ -58,17 +58,17 @@ Tauri 2 (Rust) + React 18 (strict) + TypeScript (strict) + Vite + Tailwind; Code
 
 ## MCP tools
 
-| Tool               | Read | Write | Notes                                                     |
-| ------------------ | ---- | ----- | --------------------------------------------------------- |
-| `recall`           | ✓    |       | headline; budget-aware; D-shaped bundle                   |
-| `get_outline`      | ✓    |       | heading tree, list counts, links, words/section           |
-| `apply_edit`       |      | ✓     | diff-only; preview + confirm; auto-ai-milestone on accept |
-| `create_doc`       |      | ✓     | create .md + register; idempotent; no AI needed           |
-| `create_milestone` |      | ✓     | label + optional note                                     |
-| `restore_version`  |      | ✓     | preview diff; confirm; system-before + milestone-after    |
-| `export`           |      | ✓     | to disk, dry-run for preview                              |
-| `get_stats`        |      |       | snapshot counts, words, docs, storage                     |
-| `get_document`     |      |       | read current doc or snapshot                              |
+| Tool               | Read | Write | Notes                                                                                                                                        |
+| ------------------ | ---- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `recall`           | ✓    |       | headline; budget-aware; D-shaped bundle                                                                                                      |
+| `get_outline`      | ✓    |       | heading tree, list counts, links, words/section                                                                                              |
+| `apply_edit`       |      | ✓     | diff-only; before-snapshot + milestone; needs local provider (local-only on) — with local-only off: any provider or agent-supplied `content` |
+| `create_doc`       |      | ✓     | create .md + register; idempotent; `overwrite:true` replaces (snapshot-first); no AI needed                                                  |
+| `create_milestone` |      | ✓     | label + optional note                                                                                                                        |
+| `restore_version`  |      | ✓     | preview diff; confirm; system-before + milestone-after                                                                                       |
+| `export`           |      | ✓     | to disk, dry-run for preview                                                                                                                 |
+| `get_stats`        |      |       | snapshot counts, words, docs, storage                                                                                                        |
+| `get_document`     |      |       | read current doc or snapshot                                                                                                                 |
 
 Every response includes `tokens_used`; every mutating tool supports `dry_run`. Design rules: context-budget-aware retrieval; temporal by default; projection-only structure (agents write only via patches on raw Markdown — no intermediate editable agent format, never human↔agent auto-conversion).
 

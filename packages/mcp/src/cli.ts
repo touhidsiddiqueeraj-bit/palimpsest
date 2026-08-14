@@ -8,7 +8,9 @@
  * Env (all optional):
  *   PALIMPSEST_PROVIDER_URL  provider base URL -> makes apply_edit usable
  *   PALIMPSEST_MODEL         model id (default: provider default)
- *   PALIMPSEST_LOCAL_ONLY    '0' disables the local-only AI gate (default on)
+ *   PALIMPSEST_LOCAL_ONLY    '0' turns off the local-only gate: apply_edit may
+ *                            use any configured provider, or accept agent-supplied
+ *                            content when no provider URL is set (default: '1')
  */
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
@@ -123,10 +125,15 @@ Options:
 Env:
   PALIMPSEST_PROVIDER_URL   LLM base URL -> enables apply_edit
   PALIMPSEST_MODEL          model id (default: provider default)
-  PALIMPSEST_LOCAL_ONLY     '0' disables the local-only AI gate (default on)
+  PALIMPSEST_LOCAL_ONLY     '0' turns off the local-only gate: apply_edit may
+                            use any configured provider, or accept agent-supplied
+                            content when no provider URL is set (default: '1')
 
 New documents: create empty .md files in the workspace, or call the MCP
 create_doc tool — no AI provider is needed for either.
+apply_edit: needs a local provider while local-only is on; with local-only
+off it runs against any provider, or applies agent-supplied 'content' directly
+(every edit is captured as a before-snapshot + milestone).
 `;
 
 export async function main(argv: string[]): Promise<void> {
@@ -154,6 +161,7 @@ export async function main(argv: string[]): Promise<void> {
   await bootstrap(store, ws);
 
   const providerUrl = process.env.PALIMPSEST_PROVIDER_URL;
+  const localOnly = process.env.PALIMPSEST_LOCAL_ONLY !== '0';
   const ai: AiClient | undefined = providerUrl
     ? createClient(
         {
@@ -162,11 +170,11 @@ export async function main(argv: string[]): Promise<void> {
           baseUrl: providerUrl,
           model: process.env.PALIMPSEST_MODEL ?? 'default',
         },
-        { localOnly: process.env.PALIMPSEST_LOCAL_ONLY !== '0' },
+        { localOnly },
       )
     : undefined;
 
-  const ctx: McpContext = { store, workspace: ws, ai, localOnly: true };
+  const ctx: McpContext = { store, workspace: ws, ai, localOnly };
 
   const port = Number(args.get('port'));
   if (Number.isFinite(port) && port > 0) {

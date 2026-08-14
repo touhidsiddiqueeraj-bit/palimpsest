@@ -64,9 +64,9 @@ const main = async () => {
     await client.call('apply_edit', { doc: 'notes.md', instruction: 'tweak', dry_run: true }),
   );
   ok(
-    'apply_edit guards missing AI',
-    aiError.includes('no AI provider configured'),
-    aiError.slice(0, 60),
+    'apply_edit guards local-only without AI',
+    aiError.includes('no local AI provider configured'),
+    aiError.slice(0, 80),
   );
 
   await client.close();

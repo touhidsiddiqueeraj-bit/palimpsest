@@ -142,7 +142,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'create_doc',
     description:
-      'Create a new document (.md file in the workspace) and register it with history. Idempotent: returns the existing document if the name is already taken.',
+      'Create a new document (.md file in the workspace) and register it with history. Without content: idempotent — returns the existing document if the name is taken. With content on an existing document: requires overwrite:true, which snapshots the current state first, then writes the new content.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -150,6 +150,10 @@ export const TOOLS: ToolDef[] = [
         content: {
           type: 'string',
           description: 'Optional initial text (default: a title heading)',
+        },
+        overwrite: {
+          type: 'boolean',
+          description: 'Replace an existing document (current state is snapshotted first)',
         },
       },
       required: ['doc'],
@@ -162,17 +166,30 @@ export const TOOLS: ToolDef[] = [
       const fileName = name.endsWith('.md') ? name : `${name}.md`;
       const path = join(ctx.workspace, fileName);
       const { writeFile } = await import('node:fs/promises');
+      const raw = String(args.content ?? '');
+      const text = raw.trim() ? raw : `# ${fileName.replace(/\.md$/, '')}\n\nStart writing.\n`;
       try {
-        await readFile(path, 'utf8');
+        const current = await readFile(path, 'utf8');
         const doc = await ctx.store.getOrCreateDoc(fileName, fileName);
-        return { created: false, doc_id: doc.id, document: doc.name };
-      } catch {
+        if (!raw.trim()) return { created: false, doc_id: doc.id, document: doc.name };
+        if (!args.overwrite) {
+          throw new Error(
+            `document already exists: ${fileName} — pass overwrite:true to replace it (the current state is snapshotted first), or use apply_edit for a word diff`,
+          );
+        }
+        const before = await ctx.store.capture(doc.id, current, 'auto', 'create_doc overwrite');
+        await writeFile(path, text);
+        return {
+          created: true,
+          overwritten: true,
+          doc_id: doc.id,
+          document: doc.name,
+          pre_edit_snapshot_id: before.id,
+        };
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('document already exists')) throw err;
         // file does not exist yet — fall through and create it
       }
-      const raw = String(args.content ?? '');
-      const text = raw.trim()
-        ? raw
-        : `# ${fileName.replace(/\.md$/, '')}\n\nStart writing.\n`;
       await writeFile(path, text);
       const doc = await ctx.store.getOrCreateDoc(fileName, fileName);
       await ctx.store.capture(doc.id, text, 'auto', 'seed');
@@ -240,24 +257,45 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'apply_edit',
     description:
-      'Ask the configured AI to apply an instruction. dry_run returns only the word diff; without dry_run the edit is applied after review.',
+      'Apply an edit. With a configured AI provider: ask it to apply an instruction (diff-only when dry_run). Without a provider, local-only mode refuses; with local-only off, pass content (the agent is the editor) — the word diff, a before-snapshot, and a milestone are always recorded.',
     inputSchema: {
       type: 'object',
       properties: {
         doc: { type: 'string' },
         instruction: { type: 'string' },
+        content: {
+          type: 'string',
+          description:
+            'Agent-supplied full replacement text (used when no AI provider is configured and local-only is off)',
+        },
         dry_run: { type: 'boolean' },
       },
       required: ['doc', 'instruction'],
     },
     async run(args, ctx) {
-      if (!ctx.ai) throw new Error('apply_edit: no AI provider configured');
       const { text } = await currentText(ctx, String(args.doc));
-      const { proposed, diff } = await inlineEdit({
-        client: ctx.ai,
-        instruction: String(args.instruction),
-        document: text,
-      });
+      const instruction = String(args.instruction);
+      let proposed: string;
+      let diff: { added: number; removed: number };
+      if (ctx.ai) {
+        const edit = await inlineEdit({ client: ctx.ai, instruction, document: text });
+        proposed = edit.proposed;
+        diff = edit.diff;
+      } else {
+        const agentContent = String(args.content ?? '');
+        if (ctx.localOnly) {
+          throw new Error(
+            'apply_edit: no local AI provider configured (local-only is on). Set PALIMPSEST_PROVIDER_URL to a local model, or turn local-only off and pass content.',
+          );
+        }
+        if (!agentContent.trim()) {
+          throw new Error(
+            'apply_edit: no AI provider configured and no agent-supplied content. Set PALIMPSEST_PROVIDER_URL, or pass content (local-only is off).',
+          );
+        }
+        proposed = agentContent;
+        diff = diffProse(text, proposed);
+      }
       if (args.dry_run) {
         return {
           dry_run: true,
@@ -267,15 +305,17 @@ export const TOOLS: ToolDef[] = [
         };
       }
       const doc = await ctx.store.resolveDoc(String(args.doc));
+      const before = await ctx.store.capture(doc.id, text, 'auto', 'pre-edit');
       await writeCurrent(ctx, String(args.doc), proposed);
-      const snap = await ctx.store.capture(doc.id, proposed, 'ai', String(args.instruction), {
-        model: ctx.ai.provider.model,
-        instruction: String(args.instruction),
+      const snap = await ctx.store.capture(doc.id, proposed, 'ai', instruction, {
+        model: ctx.ai?.provider.model ?? 'agent',
+        instruction,
       });
       return {
         applied: `snapshot #${snap.id}`,
         added: diff.added,
         removed: diff.removed,
+        pre_edit_snapshot_id: before.id,
         milestone_id: snap.id,
         tokens_used: tokens(text) + tokens(proposed),
       };
