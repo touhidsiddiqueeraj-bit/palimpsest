@@ -17,7 +17,13 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { mkdir, readDir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { appDataDir } from '@tauri-apps/api/path';
-import { createClient, inlineEdit, DEFAULT_PROVIDERS, isLocalUrl, type Provider } from '@palimpsest/ai';
+import {
+  createClient,
+  inlineEdit,
+  DEFAULT_PROVIDERS,
+  isLocalUrl,
+  type Provider,
+} from '@palimpsest/ai';
 
 installNetGuard();
 
@@ -152,7 +158,12 @@ export default function App() {
     if (!wsRef.current) return;
     try {
       const entries = await readDir(wsRef.current);
-      setDocs(entries.filter((e) => e.name.endsWith('.md')).map((e) => e.name).sort());
+      setDocs(
+        entries
+          .filter((e) => e.name.endsWith('.md'))
+          .map((e) => e.name)
+          .sort(),
+      );
     } catch {
       /* workspace not ready */
     }
@@ -282,7 +293,8 @@ export default function App() {
     for (const d of docs) {
       try {
         const txt = await readTextFile(`${wsRef.current}/${d}`);
-        for (const m of txt.matchAll(/\[\[([^\]|#!]+)/g)) found.push({ from: d, to: (m[1] ?? '').trim() });
+        for (const m of txt.matchAll(/\[\[([^\]|#!]+)/g))
+          found.push({ from: d, to: (m[1] ?? '').trim() });
       } catch {
         /* skip */
       }
@@ -327,7 +339,8 @@ export default function App() {
         },
       },
       {
-        label: viewMode === 'split' ? 'Write only' : viewMode === 'write' ? 'Split view' : 'Write view',
+        label:
+          viewMode === 'split' ? 'Write only' : viewMode === 'write' ? 'Split view' : 'Write view',
         hint: 'view',
         run: () => setViewMode(viewMode === 'split' ? 'write' : 'split'),
       },
@@ -655,11 +668,7 @@ export default function App() {
           <button className="text-xs underline" onClick={() => void onExport()} title="Alt+L">
             Export HTML
           </button>
-          <button
-            className="text-xs underline"
-            onClick={onPrintPdf}
-            title="Print or save as PDF"
-          >
+          <button className="text-xs underline" onClick={onPrintPdf} title="Print or save as PDF">
             Print
           </button>
           <button className="text-xs underline" onClick={toggleTheme} title="Toggle theme">
@@ -916,8 +925,8 @@ export default function App() {
                         Save
                       </button>
                       <span className="text-[10px] text-stone-400">
-                        URL & model stay on this device; the key is kept in memory for this
-                        session only and never written to disk.
+                        URL & model stay on this device; the key is kept in memory for this session
+                        only and never written to disk.
                       </span>
                     </div>
                   </div>
@@ -1008,8 +1017,8 @@ export default function App() {
                 <h2 className="mb-1 font-semibold">Backlinks</h2>
                 {incomingLinks.length === 0 ? (
                   <p className="text-stone-400">
-                    Nothing links to this note yet. Use [[wikilinks]] in other notes to connect
-                    them here.
+                    Nothing links to this note yet. Use [[wikilinks]] in other notes to connect them
+                    here.
                   </p>
                 ) : (
                   <ul className="space-y-1">
@@ -1146,7 +1155,9 @@ export default function App() {
                     }}
                   >
                     <span className="truncate">{c.label}</span>
-                    {c.hint && <span className="ml-3 shrink-0 text-xs text-stone-400">{c.hint}</span>}
+                    {c.hint && (
+                      <span className="ml-3 shrink-0 text-xs text-stone-400">{c.hint}</span>
+                    )}
                   </button>
                 </li>
               ))}

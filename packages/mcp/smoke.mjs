@@ -59,6 +59,10 @@ const main = async () => {
   ok('create_doc', made.created === true && Number(made.doc_id) > 0, JSON.stringify(made));
   const again = await client.call('create_doc', { doc: 'smoke-new.md' });
   ok('create_doc idempotent', again.created === false, JSON.stringify(again));
+  const bare = await client.call('get_document', { doc: 'smoke-new' });
+  ok('bare-name lookup', String(bare.text).includes('# smoke-new'), JSON.stringify(bare));
+  const missing = String(await client.call('get_stats', { doc: 'nonexistent_doc_test' }));
+  ok('get_stats strict', missing.includes('create_doc'), missing.slice(0, 80));
 
   const aiError = String(
     await client.call('apply_edit', { doc: 'notes.md', instruction: 'tweak', dry_run: true }),

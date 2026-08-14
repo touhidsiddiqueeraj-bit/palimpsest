@@ -67,8 +67,10 @@ Tauri 2 (Rust) + React 18 (strict) + TypeScript (strict) + Vite + Tailwind; Code
 | `create_milestone` |      | ✓     | label + optional note                                                                                                                        |
 | `restore_version`  |      | ✓     | preview diff; confirm; system-before + milestone-after                                                                                       |
 | `export`           |      | ✓     | to disk, dry-run for preview                                                                                                                 |
-| `get_stats`        |      |       | snapshot counts, words, docs, storage                                                                                                        |
+| `get_stats`        |      |       | snapshot counts, words, docs, storage; explicit missing doc errors (no fallback); no doc arg -> notes.md or first .md, named in response     |
 | `get_document`     |      |       | read current doc or snapshot                                                                                                                 |
+
+All tools accept document names with or without the `.md` suffix.
 
 Every response includes `tokens_used`; every mutating tool supports `dry_run`. Design rules: context-budget-aware retrieval; temporal by default; projection-only structure (agents write only via patches on raw Markdown — no intermediate editable agent format, never human↔agent auto-conversion).
 

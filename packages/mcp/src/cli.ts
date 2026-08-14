@@ -134,6 +134,9 @@ create_doc tool — no AI provider is needed for either.
 apply_edit: needs a local provider while local-only is on; with local-only
 off it runs against any provider, or applies agent-supplied 'content' directly
 (every edit is captured as a before-snapshot + milestone).
+Document names in tools accept with or without the '.md' suffix; get_stats
+without a doc measures notes.md (or the first .md in the workspace) and
+names it in the response.
 `;
 
 export async function main(argv: string[]): Promise<void> {

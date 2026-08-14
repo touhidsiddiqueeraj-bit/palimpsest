@@ -41,7 +41,12 @@ const mdStyle = HighlightStyle.define([
   { tag: tags.comment, color: 'var(--cm-comment)' },
 ]);
 
-function wrap(view: EditorView, before: string, after = before, url?: (sel: string) => string): boolean {
+function wrap(
+  view: EditorView,
+  before: string,
+  after = before,
+  url?: (sel: string) => string,
+): boolean {
   const { from, to } = view.state.selection.main;
   const sel = view.state.sliceDoc(from, to) || 'text';
   view.dispatch({
@@ -164,7 +169,10 @@ export function CodeEditor({
         const { from, to } = view.state.selection.main;
         const at = view.state.sliceDoc(Math.max(0, from - 1), from);
         const prefix =
-          text.startsWith('#') || text.startsWith('>') || text.startsWith('-') || text.startsWith('1.')
+          text.startsWith('#') ||
+          text.startsWith('>') ||
+          text.startsWith('-') ||
+          text.startsWith('1.')
             ? at === '\n' || at === ''
               ? ''
               : '\n'

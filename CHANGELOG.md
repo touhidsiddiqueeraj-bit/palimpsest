@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MCP: document names accept with or without the `.md` suffix across every
+  tool (`create_doc("X")` now pairs with `get_document("X")` / `apply_edit("X")`
+  / `get_stats("X")`); missing names always error as
+  `document not found: X (create it with create_doc)`.
+- MCP: `get_stats` no longer silently falls back to the first `.md` in the
+  workspace when an explicit doc name does not resolve — it errors. Without a
+  `doc` argument it defaults to `notes.md` (or the first `.md`) and names the
+  measured document in the response.
+- MCP CLI: `--help` documents doc-name forms and the `get_stats` default.
 - MCP: `apply_edit` agent-supplied path — with local-only off
   (`PALIMPSEST_LOCAL_ONLY=0`) and no provider URL, the tool accepts a full
   `content` replacement: the word diff is computed, a before-snapshot is

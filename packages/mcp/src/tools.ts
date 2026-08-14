@@ -25,12 +25,27 @@ export interface ToolDef {
 
 const tokens = (s: string) => Math.ceil(s.length / 4);
 
+/** Resolve a doc by its registered name; tolerate a missing `.md` suffix (create_doc registers `name.md`). */
+async function resolveDocName(ctx: McpContext, docName: string) {
+  try {
+    return await ctx.store.resolveDoc(docName);
+  } catch {
+    if (!docName.endsWith('.md')) {
+      try {
+        return await ctx.store.resolveDoc(`${docName}.md`);
+      } catch {
+        /* fall through to the friendly error */
+      }
+    }
+    throw new Error(`document not found: ${docName} (create it with create_doc)`);
+  }
+}
+
 async function currentText(
   ctx: McpContext,
   docName: string,
 ): Promise<{ text: string; path: string }> {
-  const doc = await ctx.store.resolveDoc(docName).catch(() => null);
-  if (!doc) throw new Error(`document not found: ${docName} (create it with create_doc)`);
+  const doc = await resolveDocName(ctx, docName);
   const path = join(ctx.workspace, doc.path ?? `${doc.name}`);
   try {
     return { text: await readFile(path, 'utf8'), path };
@@ -110,33 +125,31 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'get_stats',
     description:
-      'Statistics for a document (default: notes.md, else the first registered document).',
+      'Statistics for a document. Without doc: defaults to notes.md when present, else the first .md in the workspace root (the response names the document measured). An explicit doc that does not exist errors — no silent fallback.',
     inputSchema: {
       type: 'object',
-      properties: { doc: { type: 'string', description: 'Document name' } },
+      properties: { doc: { type: 'string', description: 'Document name (with or without .md)' } },
     },
     async run(args, ctx) {
-      const requested = String(args.doc ?? 'notes.md');
-      const pick = async (name: string) => {
-        const { text } = await currentText(ctx, name);
-        const doc = await ctx.store.resolveDoc(name);
-        const s = await ctx.store.stats(doc.id, text);
-        return {
-          document: name,
-          words: s.words,
-          chars: s.chars,
-          snapshots: s.snapshotCount,
-          tokens_used: tokens(text),
-        };
-      };
-      try {
-        return await pick(requested);
-      } catch {
-        // fall back to the first .md in the workspace root
+      const requested = String(args.doc ?? '').trim();
+      let name = requested;
+      if (!name) {
         const { readdir } = await import('node:fs/promises');
-        const first = (await readdir(ctx.workspace)).find((f) => f.endsWith('.md'));
-        return pick(first ?? requested);
+        const md = (await readdir(ctx.workspace).catch(() => [] as string[])).filter((f) =>
+          f.endsWith('.md'),
+        );
+        name = md.includes('notes.md') ? 'notes.md' : (md[0] ?? 'notes.md');
       }
+      const { text } = await currentText(ctx, name);
+      const doc = await resolveDocName(ctx, name);
+      const s = await ctx.store.stats(doc.id, text);
+      return {
+        document: doc.name,
+        words: s.words,
+        chars: s.chars,
+        snapshots: s.snapshotCount,
+        tokens_used: tokens(text),
+      };
     },
   },
   {
@@ -210,7 +223,7 @@ export const TOOLS: ToolDef[] = [
     },
     async run(args, ctx) {
       const { text } = await currentText(ctx, String(args.doc));
-      const doc = await ctx.store.resolveDoc(String(args.doc));
+      const doc = await resolveDocName(ctx, String(args.doc));
       if (args.dry_run) {
         return { dry_run: true, snapshot: text, tokens_used: tokens(text) };
       }
@@ -233,7 +246,7 @@ export const TOOLS: ToolDef[] = [
     },
     async run(args, ctx) {
       const { text } = await currentText(ctx, String(args.doc));
-      const doc = await ctx.store.resolveDoc(String(args.doc));
+      const doc = await resolveDocName(ctx, String(args.doc));
       const target = await ctx.store.get(doc.id, Number(args.snapshot_id));
       if (args.dry_run) {
         return {
@@ -304,7 +317,7 @@ export const TOOLS: ToolDef[] = [
           tokens_used: tokens(text) + tokens(proposed),
         };
       }
-      const doc = await ctx.store.resolveDoc(String(args.doc));
+      const doc = await resolveDocName(ctx, String(args.doc));
       const before = await ctx.store.capture(doc.id, text, 'auto', 'pre-edit');
       await writeCurrent(ctx, String(args.doc), proposed);
       const snap = await ctx.store.capture(doc.id, proposed, 'ai', instruction, {

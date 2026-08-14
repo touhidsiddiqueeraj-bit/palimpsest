@@ -147,6 +147,37 @@ describe('conformance (MCP server tools)', () => {
     await expect(call('get_document', { doc: 'nope.md' })).rejects.toThrow(/create_doc/);
   });
 
+  it('doc names accept with or without the .md suffix across all tools', async () => {
+    await call('create_doc', { doc: 'bare' });
+    const doc = (await call('get_document', { doc: 'bare' })) as { text: string };
+    expect(doc.text).toContain('# bare');
+    expect(((await call('get_document', { doc: 'bare.md' })) as { text: string }).text).toBe(
+      doc.text,
+    );
+    expect(
+      ((await call('get_outline', { doc: 'bare' })) as { outline: unknown[] }).outline,
+    ).toHaveLength(1);
+    const stats = (await call('get_stats', { doc: 'bare' })) as { document: string };
+    expect(stats.document).toBe('bare.md');
+    const dry = (await call('create_milestone', {
+      doc: 'bare',
+      label: 'naming',
+      dry_run: true,
+    })) as { dry_run: boolean };
+    expect(dry.dry_run).toBe(true);
+    // apply_edit resolves names too (guard fires only after resolution)
+    await expect(
+      call('apply_edit', { doc: 'bare', instruction: 'x', dry_run: true }),
+    ).rejects.toThrow(/local AI provider configured/);
+  });
+
+  it('get_stats errors on an explicit missing doc, names the default doc otherwise', async () => {
+    await expect(call('get_stats', { doc: 'nonexistent_doc_test' })).rejects.toThrow(/create_doc/);
+    const picked = (await call('get_stats')) as { document: string; snapshots: number };
+    expect(picked.document).toBe('notes.md');
+    expect(picked.snapshots).toBeGreaterThan(0);
+  });
+
   it('create_doc overwrites only with the flag, capture-first', async () => {
     await writeFile(join(ws, 'over.md'), '# Old\n');
     await expect(call('create_doc', { doc: 'over.md', content: '# New\n' })).rejects.toThrow(

@@ -17,11 +17,14 @@
     "fs:allow-rename",
     "fs:allow-read-dir",
     "fs:allow-mkdir",
-    { "identifier": "fs:scope", "allow": [
-      { "path": "$APPDATA/**" },
-      { "path": "$APPDATA/palimpsest-demo/.palimpsest/**" },
-      { "path": "$APPCONFIG/**" }
-    ] },
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$APPDATA/**" },
+        { "path": "$APPDATA/palimpsest-demo/.palimpsest/**" },
+        { "path": "$APPCONFIG/**" }
+      ]
+    },
     "dialog:default"
   ]
 }
