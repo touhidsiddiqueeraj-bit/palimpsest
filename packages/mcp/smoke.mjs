@@ -1,5 +1,11 @@
 /* Manual smoke: spawn the real CLI and drive it like an agent would. */
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { McpClient } from './src/client.ts';
+
+const WS = '/tmp/opencode/md-ws';
+mkdirSync(`${WS}/docs`, { recursive: true });
+writeFileSync(`${WS}/notes.md`, '# Alpha\n\nFirst notes for the palimpsest round trip.\n');
+writeFileSync(`${WS}/docs/one.md`, '# Beta\n');
 
 const ALL = [
   'recall',
@@ -18,7 +24,7 @@ let ok = (name, cond, extra = '') => {
 
 const main = async () => {
   const cli = '/home/touhid/Documents/markdown/packages/mcp/dist/cli.cjs';
-  const client = McpClient.stdio('node', [cli, '--workspace', '/tmp/opencode/md-ws'], {
+  const client = McpClient.stdio('node', [cli, '--workspace', WS], {
     allowlist: ALL,
   });
   await client.connect();
@@ -45,6 +51,11 @@ const main = async () => {
     dry_run: true,
   });
   ok('milestone dry_run', dry.dry_run === true, JSON.stringify(dry));
+
+  const unchanged = await client.call('create_milestone', { doc: 'notes.md', label: 'smoke' });
+  ok('milestone no-op on unchanged', unchanged.noop === true, JSON.stringify(unchanged));
+
+  appendFileSync(`${WS}/notes.md`, 'External edit before the milestone.\n');
   const real = await client.call('create_milestone', { doc: 'notes.md', label: 'smoke' });
   ok('milestone real', Number(real.snapshot_id) > 0, JSON.stringify(real));
 

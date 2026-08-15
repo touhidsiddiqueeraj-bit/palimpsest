@@ -312,7 +312,7 @@ describe('conformance (MCP server tools)', () => {
     expect(after).toContain('quick brown fox');
   });
 
-  it('create_milestone captures the file content as a snapshot', async () => {
+  it('create_milestone captures changed file content; no-ops when unchanged', async () => {
     const before = await readFile(join(ws, 'notes.md'), 'utf8');
     const dry = (await call('create_milestone', {
       doc: 'notes.md',
@@ -324,6 +324,13 @@ describe('conformance (MCP server tools)', () => {
     };
     expect(dry.dry_run).toBe(true);
     expect(dry.snapshot).toBe(before);
+    const noop = (await call('create_milestone', { doc: 'notes.md', label: 'probe' })) as {
+      noop: boolean;
+      message: string;
+    };
+    expect(noop.noop).toBe(true);
+    expect(noop.message).toContain('no changes since snapshot');
+    await writeFile(join(ws, 'notes.md'), before + '\nNew milestone-worthy line.\n');
     const real = (await call('create_milestone', { doc: 'notes.md', label: 'probe' })) as {
       snapshot_id: number;
     };

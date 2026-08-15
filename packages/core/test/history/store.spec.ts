@@ -234,4 +234,24 @@ describe('file-backed history store', () => {
     expect(s.readingMinutes).toBeGreaterThanOrEqual(1);
     expect(s.snapshotCount).toBe(2);
   });
+
+  it('reconcile captures external changes and no-ops on identical text', async () => {
+    const { doc } = await setup();
+    const before = await store.list(doc.id);
+    expect(await store.reconcile(doc.id, 'The lazy dog sleeps all day.')).toBeNull();
+    const captured = await store.reconcile(doc.id, 'Edited outside Palimpsest.');
+    expect(captured).not.toBeNull();
+    expect(captured!.kind).toBe('auto');
+    expect(captured!.label).toBe('external change');
+    expect((await store.get(doc.id, captured!.id)).text).toBe('Edited outside Palimpsest.');
+    expect(await store.reconcile(doc.id, 'Edited outside Palimpsest.')).toBeNull();
+    expect((await store.list(doc.id)).length).toBe(before.length + 1);
+  });
+
+  it('reconcile seeds the first snapshot when none exists', async () => {
+    const doc = await store.getOrCreateDoc('fresh.md');
+    const snap = await store.reconcile(doc.id, 'First content.');
+    expect(snap).not.toBeNull();
+    expect(snap!.label).toBe('initial');
+  });
 });

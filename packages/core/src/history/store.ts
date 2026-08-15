@@ -319,6 +319,20 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
     return { text: snap.text, beforeId: before.id, afterId: after.id };
   }
 
+  /** Capture an external change: when the given text differs from the latest snapshot,
+   * record it as an auto snapshot so edits made outside Palimpsest (agent, git, other
+   * editors) are visible in history. Returns null when nothing changed. */
+  async function reconcile(
+    docId: number,
+    currentText: string,
+    label = 'external change',
+  ): Promise<SnapshotInfo | null> {
+    const latest = (await listFrom('snapshots', docId, 1))[0];
+    if (!latest) return capture(docId, currentText, 'auto', 'initial');
+    if ((await get(docId, latest.id)).text === currentText) return null;
+    return capture(docId, currentText, 'auto', label);
+  }
+
   /** Rename a milestone: updates the label in the snapshot file and the index.
    * The document text itself is never modified — only the frontmatter label. */
   async function renameSnapshot(docId: number, snapshotId: number, label: string): Promise<void> {
@@ -588,6 +602,7 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
     get,
     diff,
     restore,
+    reconcile,
     renameSnapshot,
     search,
     recall,

@@ -211,7 +211,8 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'create_milestone',
-    description: 'Capture the current .md file as a named milestone.',
+    description:
+      'Capture the current .md file as a named milestone. External edits made outside Palimpsest are captured as an auto snapshot first; returns noop when nothing changed since the last snapshot.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -226,6 +227,18 @@ export const TOOLS: ToolDef[] = [
       const doc = await resolveDocName(ctx, String(args.doc));
       if (args.dry_run) {
         return { dry_run: true, snapshot: text, tokens_used: tokens(text) };
+      }
+      const external = await ctx.store.reconcile(doc.id, text);
+      const externalId = external?.id ?? null;
+      const latest = (await ctx.store.list(doc.id, 1))[0];
+      if (latest && external === null && (await ctx.store.get(doc.id, latest.id)).text === text) {
+        return {
+          noop: true,
+          message: `no changes since snapshot #${latest.id} — milestone not recorded`,
+          latest_snapshot_id: latest.id,
+          captured_external_change: externalId,
+          tokens_used: tokens(text),
+        };
       }
       const snap = await ctx.store.capture(doc.id, text, 'milestone', String(args.label));
       return { snapshot_id: snap.id, tokens_used: tokens(text) };
