@@ -135,8 +135,9 @@ apply_edit: needs a local provider while local-only is on; with local-only
 off it runs against any provider, or applies agent-supplied 'content' directly
 (every edit is captured as a before-snapshot + milestone).
 External file edits (agent, git, other editors) are captured as auto snapshots
-when a doc is opened or a milestone is requested; create_milestone no-ops when
-nothing changed since the last snapshot.
+when a doc is opened or a milestone is requested; create_milestone on an
+unchanged doc attaches the label to its latest snapshot (reused_snapshot:
+true) instead of no-op'ing.
 Document names in tools accept with or without the '.md' suffix; get_stats
 without a doc measures notes.md (or the first .md in the workspace) and
 names it in the response.

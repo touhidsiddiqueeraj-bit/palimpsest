@@ -312,7 +312,7 @@ describe('conformance (MCP server tools)', () => {
     expect(after).toContain('quick brown fox');
   });
 
-  it('create_milestone captures changed file content; no-ops when unchanged', async () => {
+  it('create_milestone captures changed file content; labels latest snapshot when unchanged', async () => {
     const before = await readFile(join(ws, 'notes.md'), 'utf8');
     const dry = (await call('create_milestone', {
       doc: 'notes.md',
@@ -324,18 +324,34 @@ describe('conformance (MCP server tools)', () => {
     };
     expect(dry.dry_run).toBe(true);
     expect(dry.snapshot).toBe(before);
-    const noop = (await call('create_milestone', { doc: 'notes.md', label: 'probe' })) as {
-      noop: boolean;
+    const first = (await call('create_milestone', { doc: 'notes.md', label: 'probe' })) as {
+      snapshot_id: number;
+      reused_snapshot: boolean;
+    };
+    expect(first.snapshot_id).toBeGreaterThan(0);
+    expect(first.reused_snapshot).toBeUndefined();
+    const docId = (await store.resolveDoc('notes.md')).id;
+    const reused = (await call('create_milestone', { doc: 'notes.md', label: 'probe' })) as {
+      reused_snapshot: boolean;
+      snapshot_id: number;
       message: string;
     };
-    expect(noop.noop).toBe(true);
-    expect(noop.message).toContain('no changes since snapshot');
+    expect(reused.reused_snapshot).toBe(true);
+    expect(reused.snapshot_id).toBe(first.snapshot_id);
+    expect(reused.message).toContain('labeled snapshot');
+    expect((await store.get(docId, reused.snapshot_id)).label).toBe('probe');
+    const relabel = (await call('create_milestone', { doc: 'notes.md', label: 'probe2' })) as {
+      reused_snapshot: boolean;
+      snapshot_id: number;
+    };
+    expect(relabel.reused_snapshot).toBeUndefined();
+    expect(relabel.snapshot_id).toBeGreaterThan(reused.snapshot_id);
     await writeFile(join(ws, 'notes.md'), before + '\nNew milestone-worthy line.\n');
     const real = (await call('create_milestone', { doc: 'notes.md', label: 'probe' })) as {
       snapshot_id: number;
     };
     expect(real.snapshot_id).toBeGreaterThan(0);
-    const snaps = await store.list((await store.resolveDoc('notes.md')).id);
+    const snaps = await store.list(docId);
     expect(snaps.some((s) => s.label === 'probe')).toBe(true);
   });
 

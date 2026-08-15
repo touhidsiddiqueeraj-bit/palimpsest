@@ -53,7 +53,7 @@ const main = async () => {
   ok('milestone dry_run', dry.dry_run === true, JSON.stringify(dry));
 
   const unchanged = await client.call('create_milestone', { doc: 'notes.md', label: 'smoke' });
-  ok('milestone no-op on unchanged', unchanged.noop === true, JSON.stringify(unchanged));
+  ok('milestone labels latest on unchanged', unchanged.reused_snapshot === true, JSON.stringify(unchanged));
 
   appendFileSync(`${WS}/notes.md`, 'External edit before the milestone.\n');
   const real = await client.call('create_milestone', { doc: 'notes.md', label: 'smoke' });
