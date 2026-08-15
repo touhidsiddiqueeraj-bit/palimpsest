@@ -14,22 +14,10 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
-import { join, relative, resolve, dirname } from 'node:path';
-import { createHistoryStore, type SqliteDb, type SnapshotFs } from '@palimpsest/core';
+import { join, resolve, dirname } from 'node:path';
+import { createHistoryStore, listMarkdownDocs, type Readdir, type SqliteDb, type SnapshotFs } from '@palimpsest/core';
 import { createClient, isLocalUrl, type AiClient } from '@palimpsest/ai';
 import { runStdioServer, runHttpServer, type McpContext } from './index.js';
-
-const SKIP_DIRS = new Set([
-  '.git',
-  '.palimpsest',
-  'node_modules',
-  'dist',
-  'out',
-  'target',
-  'coverage',
-  'test-results',
-  'playwright-report',
-]);
 
 function nodeDb(dbPath: string): SqliteDb {
   const raw = new DatabaseSync(dbPath);
@@ -78,28 +66,18 @@ const safeReaddir = async (dir: string): Promise<string[]> => {
   }
 };
 
-async function walkMarkdown(dir: string, base: string, out: string[]): Promise<void> {
-  const entries = await safeReaddir(dir);
-  for (const entry of entries) {
-    if (SKIP_DIRS.has(entry) || entry.startsWith('.')) continue;
-    const full = join(dir, entry);
-    const rel = relative(base, full);
-    const mode = (await import('node:fs/promises')).stat(full).then(
-      (s) => s.isDirectory(),
-      () => false,
-    );
-    if (await mode) {
-      await walkMarkdown(full, base, out);
-    } else if (entry.endsWith('.md')) {
-      out.push(rel);
-    }
+const nodeReaddir: Readdir = async (dir: string) => {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries.map((e) => ({ name: e.name, isDir: e.isDirectory() }));
+  } catch {
+    return [];
   }
-}
+};
 
 /** Register every workspace .md and seed its first snapshot so history tools work from day one. */
 async function bootstrap(store: ReturnType<typeof createHistoryStore>, ws: string): Promise<void> {
-  const docs: string[] = [];
-  await walkMarkdown(ws, ws, docs);
+  const docs = await listMarkdownDocs(ws, nodeReaddir);
   for (const name of docs) {
     const doc = await store.getOrCreateDoc(name, name);
     const existing = await store.list(doc.id);

@@ -1,7 +1,7 @@
 import { diffProse, renderMarkdown, type HistoryStore } from '@palimpsest/core';
 import { inlineEdit, type AiClient } from '@palimpsest/ai';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, mkdir } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 
 /**
  * MCP tool layer (capability-layer pattern): every tool maps 1:1 onto
@@ -179,6 +179,7 @@ export const TOOLS: ToolDef[] = [
       const fileName = name.endsWith('.md') ? name : `${name}.md`;
       const path = join(ctx.workspace, fileName);
       const { writeFile } = await import('node:fs/promises');
+      if (dirname(path) !== ctx.workspace) await mkdir(dirname(path), { recursive: true });
       const raw = String(args.content ?? '');
       const text = raw.trim() ? raw : `# ${fileName.replace(/\.md$/, '')}\n\nStart writing.\n`;
       try {

@@ -27,6 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that agents misreport as done; external file edits are still captured as
   auto snapshots when a doc is opened or a milestone is requested
   (documented in `--help`).
+- Desktop: workspaces are scanned recursively — `.md` files in subfolders
+  (shown as `folder/name.md`) now appear in the Docs list, and the list
+  re-scans every 5 seconds so files created by agents or other editors show
+  up without a restart. Dot-directories (`.palimpsest`, `.git`), hidden files
+  and build/dependency dirs (`node_modules`, `dist`, `target`, …) stay out of
+  the list. The single `.palimpsest` history folder stays at the workspace
+  root; snapshot storage is unchanged.
+- Desktop: the Docs "new file" field accepts `subfolder/name.md` and creates
+  the parent folder, matching what agents can already do via the MCP server.
+- MCP: `create_doc` creates the parent directory for nested names, and the
+  CLI now shares the same recursive Markdown walker as the desktop app
+  (`packages/core`), so both surface identical document sets.
 
 ### Changed
 

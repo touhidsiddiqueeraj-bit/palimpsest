@@ -20,8 +20,10 @@ import type { LucideIcon } from 'lucide-react';
 import {
   createHistoryStore,
   diffProse,
+  listMarkdownDocs,
   renderMarkdown,
   snapshotDue,
+  type DirEntry,
   type HistoryStore,
   type SearchHit,
   type SnapshotInfo,
@@ -47,6 +49,16 @@ installNetGuard();
 
 const INITIAL = '# Chapter one\n\nThe quick brown fox jumps over the lazy dog.\n';
 const INITIAL_TS = Date.now() - 1000 * 60 * 60 * 24;
+
+/** tauri plugin-fs readDir behind core's DirEntry shape. */
+async function workspaceEntries(dir: string): Promise<DirEntry[]> {
+  try {
+    const entries = await readDir(dir);
+    return entries.map((e) => ({ name: e.name, isDir: e.isDirectory }));
+  } catch {
+    return [];
+  }
+}
 
 export default function App() {
   const [store, setStore] = useState<HistoryStore | null>(null);
@@ -160,11 +172,7 @@ export default function App() {
     await s.init();
     setStore(s);
     storeRef.current = s;
-    const entries = await readDir(workspace);
-    const mds = entries
-      .filter((e) => e.name.endsWith('.md'))
-      .map((e) => e.name)
-      .sort();
+    const mds = await listMarkdownDocs(workspace, workspaceEntries);
     let name: string;
     if (mds.length > 0) {
       name = mds[0]!;
@@ -215,19 +223,14 @@ export default function App() {
     };
   }, []);
 
+  const docsListRef = useRef('');
   const loadDocs = async () => {
     if (!wsRef.current) return;
-    try {
-      const entries = await readDir(wsRef.current);
-      setDocs(
-        entries
-          .filter((e) => e.name.endsWith('.md'))
-          .map((e) => e.name)
-          .sort(),
-      );
-    } catch {
-      /* workspace not ready */
-    }
+    const list = await listMarkdownDocs(wsRef.current, workspaceEntries);
+    const key = list.join('\n');
+    if (key === docsListRef.current) return;
+    docsListRef.current = key;
+    setDocs(list);
   };
 
   const persistLive = (id: number, v: string) => {
@@ -278,7 +281,8 @@ export default function App() {
     const raw = newDocName.trim();
     if (!raw || !store || !wsRef.current) return;
     let name = raw.endsWith('.md') ? raw : `${raw}.md`;
-    if (name.includes('/')) name = name.split('/').pop() ?? name;
+    const slash = name.lastIndexOf('/');
+    if (slash > 0) await mkdir(`${wsRef.current}/${name.slice(0, slash)}`, { recursive: true });
     const exists = await readTextFile(`${wsRef.current}/${name}`).catch(() => null);
     setNewDocName('');
     if (exists !== null) return openDoc(name);
@@ -562,6 +566,7 @@ export default function App() {
   useEffect(() => {
     if (!store || docId === null) return;
     const t = window.setInterval(async () => {
+      void loadDocs();
       const churn = Math.abs(text.length - lastLen.current);
       if (snapshotDue(Date.now(), INITIAL_TS, churn)) {
         await store.capture(docId, text, 'auto', 'auto');
