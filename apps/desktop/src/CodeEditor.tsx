@@ -22,10 +22,10 @@ export interface EditorApi {
 }
 
 const mdStyle = HighlightStyle.define([
-  { tag: tags.heading1, color: 'var(--cm-h1)', fontWeight: '700' },
-  { tag: tags.heading2, color: 'var(--cm-h2)', fontWeight: '700' },
-  { tag: tags.heading3, color: 'var(--cm-h3)', fontWeight: '700' },
-  { tag: tags.heading4, color: 'var(--cm-h4)', fontWeight: '700' },
+  { tag: tags.heading1, color: 'var(--cm-h1)', fontWeight: '700', fontSize: '1.55em' },
+  { tag: tags.heading2, color: 'var(--cm-h2)', fontWeight: '700', fontSize: '1.3em' },
+  { tag: tags.heading3, color: 'var(--cm-h3)', fontWeight: '700', fontSize: '1.14em' },
+  { tag: tags.heading4, color: 'var(--cm-h4)', fontWeight: '700', fontSize: '1.05em' },
   { tag: tags.heading5, color: 'var(--cm-h5)', fontWeight: '700' },
   { tag: tags.heading6, color: 'var(--cm-h6)', fontWeight: '700' },
   { tag: tags.strong, color: 'var(--cm-strong)', fontWeight: '700' },

@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   auto snapshots when a doc is opened or a milestone is requested
   (documented in `--help`).
 
+### Changed
+
+- Desktop: UI refinish — panes separate by whitespace instead of border
+  rules (the only remaining seam is editor→preview); one accent color
+  (orange) reserved for a single primary action per view (Accept, Save,
+  active segment); markdown links render neutral; toolbar rebuilt as
+  lucide icons grouped into format/insert/block clusters; editor headings
+  scale 1.55→1.0em and metadata is smaller with tabular numerals; history
+  list gets a git-log timeline spine with hue-family dots; history drawer
+  (and Ask AI) now collapsed by default — expand via the rail.
+
 ### Fixed
 
 - Desktop: first-launch/double-click boot bug — the open handler closed over

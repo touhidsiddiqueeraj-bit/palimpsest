@@ -1,4 +1,22 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Bold,
+  Code2,
+  Heading1,
+  Heading2,
+  Heading3,
+  Italic,
+  Link2,
+  List,
+  ListOrdered,
+  ListTodo,
+  Minus,
+  Quote,
+  StickyNote,
+  Strikethrough,
+  Table2,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import {
   createHistoryStore,
   diffProse,
@@ -65,10 +83,12 @@ export default function App() {
   const fileSearchTimer = useRef<number | null>(null);
   const fileSearchRef = useRef<HTMLInputElement | null>(null);
   const [collapsed, setCollapsed] = useState(() => {
-    const def = { docs: false, hist: false };
+    const def = { docs: false, hist: true };
     try {
-      const c = { ...def, ...(JSON.parse(localStorage.getItem('palimpsest.panels') ?? '{}') as object) };
-      return c;
+      const stored = JSON.parse(localStorage.getItem('palimpsest.panels') ?? '{}') as {
+        docs?: boolean;
+      };
+      return { ...def, docs: stored.docs ?? false };
     } catch {
       return def;
     }
@@ -499,23 +519,33 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docs, viewMode, theme, paletteQuery, activeDoc]);
 
-  const toolbar = [
-    ['B', () => editorApiRef.current?.wrap('**')],
-    ['I', () => editorApiRef.current?.wrap('*')],
-    ['S', () => editorApiRef.current?.wrap('~~')],
-    ['`', () => editorApiRef.current?.wrap('`')],
-    ['Link', () => editorApiRef.current?.wrap('[', '](https://)', (sel) => sel)],
-    ['H1', () => editorApiRef.current?.insert('# ')],
-    ['H2', () => editorApiRef.current?.insert('## ')],
-    ['H3', () => editorApiRef.current?.insert('### ')],
-    ['Quote', () => editorApiRef.current?.insert('> ')],
-    ['• List', () => editorApiRef.current?.insert('- ')],
-    ['1. List', () => editorApiRef.current?.insert('1. ')],
-    ['☑ Task', () => editorApiRef.current?.insert('- [ ] ')],
-    ['Table', () => editorApiRef.current?.insert('| col | col |\n| --- | --- |\n|  |  |')],
-    ['÷ Rule', () => editorApiRef.current?.insert('---')],
-    ['Note', () => editorApiRef.current?.insert('> [!note]')],
-  ] as const;
+  const toolbar: Array<{ Icon: LucideIcon; title: string; group: number; run: () => void }> = [
+    { Icon: Bold, title: 'Bold', group: 0, run: () => editorApiRef.current?.wrap('**') },
+    { Icon: Italic, title: 'Italic', group: 0, run: () => editorApiRef.current?.wrap('*') },
+    { Icon: Strikethrough, title: 'Strikethrough', group: 0, run: () => editorApiRef.current?.wrap('~~') },
+    { Icon: Code2, title: 'Inline code', group: 0, run: () => editorApiRef.current?.wrap('`') },
+    {
+      Icon: Link2,
+      title: 'Link',
+      group: 1,
+      run: () => editorApiRef.current?.wrap('[', '](https://)', (sel) => sel),
+    },
+    { Icon: Heading1, title: 'Heading 1', group: 1, run: () => editorApiRef.current?.insert('# ') },
+    { Icon: Heading2, title: 'Heading 2', group: 1, run: () => editorApiRef.current?.insert('## ') },
+    { Icon: Heading3, title: 'Heading 3', group: 1, run: () => editorApiRef.current?.insert('### ') },
+    { Icon: Quote, title: 'Quote', group: 1, run: () => editorApiRef.current?.insert('> ') },
+    { Icon: List, title: 'Bullet list', group: 1, run: () => editorApiRef.current?.insert('- ') },
+    { Icon: ListOrdered, title: 'Numbered list', group: 1, run: () => editorApiRef.current?.insert('1. ') },
+    { Icon: ListTodo, title: 'Task list', group: 1, run: () => editorApiRef.current?.insert('- [ ] ') },
+    {
+      Icon: Table2,
+      title: 'Table',
+      group: 2,
+      run: () => editorApiRef.current?.insert('| col | col |\n| --- | --- |\n|  |  |'),
+    },
+    { Icon: Minus, title: 'Horizontal rule', group: 2, run: () => editorApiRef.current?.insert('---') },
+    { Icon: StickyNote, title: 'Callout', group: 2, run: () => editorApiRef.current?.insert('> [!note]') },
+  ];
 
   const refreshSnaps = async (id: number) => {
     if (!store) return;
@@ -711,9 +741,6 @@ export default function App() {
     return groups;
   }, [filtered]);
 
-  const dotClass = (kind: string) =>
-    kind === 'milestone' ? 'dot-milestone' : kind === 'ai' ? 'dot-ai' : '';
-
   const onRename = async (s: SnapshotInfo) => {
     if (!store || docId === null) return;
     const label = window.prompt('Milestone name', s.label || '');
@@ -879,7 +906,7 @@ export default function App() {
         </div>
         <h1 className="font-semibold">Palimpsest</h1>
         <span className="text-stone-500">{activeDoc}</span>
-        <span className="text-stone-400">
+        <span className="tabular-nums text-stone-400">
           · {diffWords.base}: <span className="d-del">−{diffWords.removed}</span>{' '}
           <span className="d-add">+{diffWords.added}</span>
         </span>
@@ -892,7 +919,7 @@ export default function App() {
               onBlur={() => setTimeout(() => setFileResults([]), 150)}
               placeholder={`search ${activeDoc}…`}
               title="Search current file + its history (Ctrl+Shift+F)"
-              className="w-52 rounded border border-stone-300 px-2 py-0.5 text-xs outline-none focus:border-stone-500"
+              className="w-52 rounded border border-stone-300 px-2 py-0.5 text-xs outline-none"
             />
             {(fileResults.length > 0 || (fileQuery.trim() && fileResults.length === 0)) && (
               <ul className="absolute right-0 top-full z-40 mt-1 max-h-72 w-96 overflow-y-auto rounded border border-stone-200 bg-white p-1 text-xs shadow-lg">
@@ -924,12 +951,12 @@ export default function App() {
               </ul>
             )}
           </div>
-          <div className="flex overflow-hidden rounded border border-stone-300 text-xs">
+          <div className="flex items-center gap-1 text-xs">
             {(['write', 'split', 'read'] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setViewMode(m)}
-                className={`px-2 py-0.5 ${viewMode === m ? 'active-seg' : 'hover:bg-stone-100'}`}
+                className={`px-2 py-0.5 ${viewMode === m ? 'seg-active' : 'text-stone-500 hover:bg-stone-100 hover:text-stone-800'}`}
               >
                 {m}
               </button>
@@ -954,7 +981,7 @@ export default function App() {
       </header>
       <div className="flex flex-1 overflow-hidden">
         {collapsed.docs ? (
-          <aside className="flex w-8 shrink-0 flex-col items-center border-r border-stone-200 py-2">
+          <aside className="flex w-8 shrink-0 flex-col items-center bg-[var(--bg2)] py-2">
             <button
               onClick={togglePane('docs')}
               title="Show docs"
@@ -964,7 +991,7 @@ export default function App() {
             </button>
           </aside>
         ) : (
-          <aside className="w-44 shrink-0 overflow-y-auto border-r border-stone-200 p-3 text-sm">
+          <aside className="w-44 shrink-0 overflow-y-auto p-3 text-sm">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="font-semibold">Docs</h2>
             <div className="flex items-center gap-2">
@@ -1018,19 +1045,19 @@ export default function App() {
             />
             <button
               onClick={() => void createDoc()}
-              className="rounded border border-stone-300 px-2 text-xs hover:bg-stone-100"
+              className="rounded px-2 text-xs hover:bg-stone-100"
               title="New document"
             >
               +
             </button>
           </div>
-          <div className="mt-3 border-t border-stone-200 pt-2">
+          <div className="mt-4">
             <input
               value={searchQuery}
               ref={searchInputRef}
               onChange={(e) => onSearch(e.target.value)}
               placeholder="search notes…"
-              className="w-full rounded border border-stone-300 px-1.5 py-0.5 text-xs outline-none focus:border-stone-500"
+              className="w-full rounded border border-stone-300 px-1.5 py-0.5 text-xs outline-none"
             />
             {searchResults.length > 0 && (
               <ul className="mt-1 space-y-1">
@@ -1062,7 +1089,7 @@ export default function App() {
             )}
           </div>
           {outline.length > 0 && (
-            <div className="mt-3 border-t border-stone-200 pt-2">
+            <div className="mt-4">
               <h3 className="mb-1 text-xs font-semibold text-stone-500">Outline</h3>
               <ul className="space-y-0.5">
                 {outline.map((o, i) => (
@@ -1083,7 +1110,7 @@ export default function App() {
         </aside>
         )}
         {collapsed.hist ? (
-          <aside className="flex w-8 shrink-0 flex-col items-center border-r border-stone-200 py-2">
+          <aside className="flex w-8 shrink-0 flex-col items-center bg-[var(--bg2)] py-2">
             <button
               onClick={togglePane('hist')}
               title="Show history"
@@ -1093,7 +1120,7 @@ export default function App() {
             </button>
           </aside>
         ) : (
-          <aside className="w-80 shrink-0 overflow-y-auto border-r border-stone-200 p-3 text-sm">
+          <aside className="w-80 shrink-0 overflow-y-auto p-3 text-sm">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="font-semibold">History</h2>
             <div className="flex items-center gap-2">
@@ -1166,11 +1193,11 @@ export default function App() {
                 <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-stone-400">
                   {g.day}
                 </h3>
-                <ul className="space-y-1">
+                <ul className="timeline space-y-1">
                   {g.items.map((s) => {
                     const chip = statusChip(s.status);
                     return (
-                      <li key={s.id}>
+                      <li key={s.id} className={`timeline-item ${selected === s.id ? 'selected' : ''}`}>
                         <button
                           onClick={() => {
                             clearDiff();
@@ -1184,7 +1211,7 @@ export default function App() {
                           }`}
                         >
                           <span className="flex items-center gap-1.5">
-                            <span className={`dot ${dotClass(s.kind)}`} />
+                            <span className={`tl-dot tl-dot-${s.kind}`} />
                             <span
                               className={`block flex-1 truncate ${
                                 s.kind === 'milestone' ? 'font-semibold' : ''
@@ -1194,7 +1221,7 @@ export default function App() {
                             </span>
                             {chip && <span className={`chip ${chip.cls}`}>{chip.label}</span>}
                           </span>
-                          <span className="block pl-3.5 text-xs text-stone-400">
+                          <span className="block text-[11px] tabular-nums text-stone-400">
                             {new Date(s.ts).toLocaleTimeString()} · {s.words}w · {s.kind}
                           </span>
                         </button>
@@ -1205,13 +1232,13 @@ export default function App() {
               </div>
             ))}
           </div>
-          <div className="mt-4 border-t border-stone-200 pt-3">
-            <div className="mb-2 flex gap-1">
+          <div className="mt-5">
+            <div className="mt-4 flex gap-1">
               {(['edit', 'chat', 'links'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={`rounded px-2 py-0.5 text-xs ${tab === t ? 'bg-stone-300' : 'bg-stone-100 hover:bg-stone-200'}`}
+                  className={`px-2 py-0.5 text-xs ${tab === t ? 'seg-active' : 'text-stone-500 hover:bg-stone-100 hover:text-stone-800'}`}
                 >
                   {t === 'edit' ? 'Edit' : t === 'chat' ? 'Chat' : 'Links'}
                 </button>
@@ -1222,7 +1249,7 @@ export default function App() {
                 <h2 className="mb-1 font-semibold">
                   Ask AI
                   <button
-                    className="ml-2 rounded border border-stone-300 px-1.5 py-0.5 text-[10px] font-normal hover:bg-stone-100"
+                    className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-normal hover:bg-stone-100"
                     onClick={() => setShowAiCfg((v) => !v)}
                   >
                     {showAiCfg ? 'Done' : 'Settings'}
@@ -1233,7 +1260,7 @@ export default function App() {
                     <label className="block">
                       <span className="text-stone-500">Server URL</span>
                       <input
-                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none focus:border-stone-500"
+                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none"
                         value={aiCfg.baseUrl}
                         onChange={(e) => setAiCfg((c) => ({ ...c, baseUrl: e.target.value }))}
                         placeholder="http://127.0.0.1:11434 (Ollama) or https://…/v1"
@@ -1242,7 +1269,7 @@ export default function App() {
                     <label className="mt-1 block">
                       <span className="text-stone-500">Model</span>
                       <input
-                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none focus:border-stone-500"
+                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none"
                         value={aiCfg.model}
                         onChange={(e) => setAiCfg((c) => ({ ...c, model: e.target.value }))}
                         placeholder="llama3.2 / gpt-4o-mini / local-model"
@@ -1254,7 +1281,7 @@ export default function App() {
                       </span>
                       <input
                         type="password"
-                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none focus:border-stone-500"
+                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none"
                         value={aiKey}
                         onChange={(e) => setAiKey(e.target.value)}
                         placeholder={isLocalUrl(aiCfg.baseUrl) ? 'leave empty' : 'sk-…'}
@@ -1280,7 +1307,7 @@ export default function App() {
                   </span>
                 )}
                 <textarea
-                  className="w-full resize-none rounded border border-stone-300 p-2 text-xs outline-none focus:border-stone-500"
+                  className="w-full resize-none rounded border border-stone-300 p-2 text-xs outline-none"
                   rows={3}
                   placeholder={`Ask AI · ${provider.model} — edit instruction`}
                   value={prompt}
@@ -1288,7 +1315,7 @@ export default function App() {
                 />
                 <div className="mt-1 flex gap-2">
                   <button
-                    className="btn-primary"
+                    className="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100 disabled:opacity-50"
                     onClick={() => void onPropose()}
                     disabled={aiBusy || !prompt.trim()}
                   >
@@ -1297,7 +1324,7 @@ export default function App() {
                   {proposal && (
                     <>
                       <button
-                        className="rounded bg-emerald-700 px-2 py-1 text-xs text-white hover:bg-emerald-600"
+                        className="btn-primary"
                         onClick={() => void onAccept()}
                         disabled={busy}
                       >
@@ -1334,7 +1361,7 @@ export default function App() {
                 </div>
                 <div className="mt-1 flex gap-1">
                   <input
-                    className="flex-1 rounded border border-stone-300 px-2 py-1 text-xs outline-none focus:border-stone-500"
+                    className="flex-1 rounded border border-stone-300 px-2 py-1 text-xs outline-none"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && void onSend()}
@@ -1377,7 +1404,7 @@ export default function App() {
                     ))}
                   </ul>
                 )}
-                <div className="mt-3 border-t border-stone-200 pt-2 text-stone-400">
+                <div className="mt-4 text-stone-400">
                   {links.length} links across {docs.length} notes
                 </div>
               </div>
@@ -1387,16 +1414,21 @@ export default function App() {
         )}
         <main className="flex min-h-0 flex-1 flex-col">
           {viewMode !== 'read' && (
-            <div className="flex flex-wrap items-center gap-1 border-b border-stone-200 px-2 py-1">
-              {toolbar.map(([label, run]) => (
-                <button
-                  key={label}
-                  onClick={run}
-                  className="rounded border border-stone-300 px-1.5 py-0.5 text-xs hover:bg-stone-100"
-                  title={String(label)}
-                >
-                  {label}
-                </button>
+            <div className="flex flex-wrap items-center px-2 py-1.5">
+              {toolbar.map((t, i) => (
+                <Fragment key={t.title}>
+                  {i > 0 && t.group !== toolbar[i - 1]!.group && (
+                    <div className="mx-1.5 h-4 w-px bg-[var(--line)]" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={t.run}
+                    title={t.title}
+                    className="rounded p-1 text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                  >
+                    <t.Icon size={15} strokeWidth={1.75} />
+                  </button>
+                </Fragment>
               ))}
             </div>
           )}
@@ -1518,7 +1550,7 @@ export default function App() {
               </div>
             )}
           </div>
-          <footer className="flex items-center gap-3 border-t border-stone-200 px-3 py-1 text-xs text-stone-400">
+          <footer className="flex items-center gap-3 px-3 py-1.5 text-xs text-stone-400">
             <label className="flex items-center gap-1 text-stone-500" title="Cursor stays centered while typing">
               <input
                 type="checkbox"
@@ -1527,7 +1559,7 @@ export default function App() {
               />
               Typewriter
             </label>
-            <span>
+            <span className="tabular-nums">
               {words} words · {text.length} chars · {Math.max(1, Math.round(words / 200))} min read
             </span>
             <span className="ml-auto">{activeDoc}</span>
