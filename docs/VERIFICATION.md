@@ -1,28 +1,31 @@
 # Verification
 
 Proof, not promises. Every claim below was reproduced on
-2026-08-13 against this repository's own files (no fixtures): `PLAN.md`,
-`CHANGELOG.md`, and the smoke workspace `/tmp/opencode/md-ws`.
+2026-08-15 against this repository's own files (no fixtures): `PLAN.md`,
+`CHANGELOG.md`, the smoke workspace `/tmp/opencode/md-ws`, and the desktop
+app's own installed artifacts (deb contents, `~/.config`, `~/.local/share`).
 
 ## Summary
 
 | Gate                          | Result                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| Unit tests                    | core **43/43** · ai **9/9** · mcp **10/10** (8 conformance + 2 client) |
+| Unit tests                    | core **45/45** · ai **9/9** · mcp **18/18**                            |
 | Typecheck                     | 0 errors (strict TS across packages)                                   |
 | Lint + Prettier               | 0 errors / clean                                                       |
 | MCP conformance suite         | green (vitest, included in `pnpm test`)                                |
-| Live stdio server             | 8/8 smoke checks PASS                                                  |
+| Live stdio server             | 13/13 smoke checks PASS (incl. milestone no-op contract)               |
 | Live Streamable HTTP          | get_stats / recall / get_outline over raw `fetch()`                    |
 | Registered as an opencode MCP | tools called in a running opencode session                             |
+| Desktop: file-manager open    | `xdg-open notes.md` → app boots, full history + reconcile snapshot     |
+| Desktop: OS registration      | deb ships `palimpsest.desktop` (MIME `text/markdown`, `%F`); `gio mime` default set |
 | CI (GitHub Actions)           | `test` job green at HEAD of this documentation                         |
 
 ## 1. Unit tests (local)
 
 ```
-$ pnpm --filter core exec vitest run   → 43 passed
+$ pnpm --filter core exec vitest run   → 45 passed
 $ pnpm --filter ai exec vitest run     → 9 passed
-$ pnpm --filter mcp exec vitest run    → 10 passed
+$ pnpm --filter mcp exec vitest run    → 18 passed
 $ pnpm typecheck && pnpm lint          → 0 errors
 ```
 
@@ -33,16 +36,25 @@ $ pnpm typecheck && pnpm lint          → 0 errors
 stdio and exercises every tool, including the dry-run guard on mutators:
 
 ```
-PASS get_stats             {"document":"notes.md","words":9,"chars":52,"snapshots":3,"tokens_used":13}
+PASS get_stats             {"document":"notes.md","words":9,"chars":52,"snapshots":1,"tokens_used":13}
 PASS get_document          {"text":"# Alpha\n\nFirst notes for the palimpsest round trip.\n","tokens_used":13}
-PASS get_outline           {"doc":"docs/one.md","outline":[{"level":1,"text":"Beta"}],"tokens_used":11}
+PASS get_outline           {"doc":"docs/one.md","outline":[{"level":1,"text":"Beta"}],"tokens_used":2}
 PASS recall                status "current" · snippet "…First notes for the [palimpsest] round trip…"
 PASS milestone dry_run     {"dry_run":true,"snapshot":"# Alpha…","tokens_used":13}
-PASS milestone real        {"snapshot_id":1786619923052,"tokens_used":13}
-PASS restore dry_run       {"dry_run":true,"diff":{"added":0,"removed":0},"tokens_used":26}
+PASS milestone no-op       {"noop":true,"message":"no changes since snapshot #…","captured_external_change":null}
+PASS milestone real        {"snapshot_id":1786782702157,"tokens_used":22}   ← after an external file edit
+PASS restore dry_run       {"dry_run":true,"diff":{"added":0,"removed":0},"tokens_used":44}
+PASS create_doc            {"created":true,"doc_id":3,"document":"smoke-new.md"}
+PASS create_doc idempotent {"created":false,"doc_id":3,"document":"smoke-new.md"}
+PASS bare-name lookup      {"text":"# smoke-new…","tokens_used":7}
+PASS get_stats strict      document not found: nonexistent_doc_test (create it with create_doc)
 PASS apply_edit guards     apply_edit: no local AI provider configured (local-only is on). Set PALIMPSEST_P…   ← no silent AI writes, by design
 SMOKE OK
 ```
+
+The script itself seeds a clean workspace (`/tmp/opencode/md-ws/notes.md`,
+`docs/one.md`) and mutates the doc on disk mid-run to prove the external-edit
+→ snapshot path; `create_milestone` on an unchanged doc no-ops.
 
 ## 3. MCP server — live Streamable HTTP
 
@@ -82,7 +94,32 @@ The recall hits come from the server's own bootstrap: at startup it walks
 the workspace `.md` files and seeds a first snapshot for each, so the
 index is real repo history, not a demo corpus.
 
-## 5. CI
+## 5. Desktop — open `.md` from the file manager
+
+Reproduced against the installed binary (no debug code) on 2026-08-15:
+
+```
+$ gio mime text/markdown                      → default: palimpsest.desktop
+$ xdg-open ~/Documents/open-test.md           → app boots with that doc open
+$ sqlite3 ~/Documents/.palimpsest/index.db "select label, snapshot from snapshots"
+  → auto | initial         (seeded when the file was first opened)
+  → auto | external change (captured when the file changed outside the app)
+$ cat ~/.config/dev.palimpsest.app/workspace.txt   → /home/touhid/Documents
+```
+
+The `.desktop` shipped inside the installers was verified by extracting the
+deb: `usr/share/applications/palimpsest.desktop` carries
+`MimeType=text/markdown;text/x-markdown;`, `Categories=Utility;TextEditor;`,
+`Exec=palimpsest %F`. Launching with no arguments reopens the persisted
+workspace (`workspace.txt`); the demo fallback only appears when no workspace
+was ever chosen.
+
+Notes: the `.palimpsest` history tree must be allow-listed explicitly in the
+runtime fs scope — Tauri's recursive `dir/**` glob never matches
+dot-directories, so before the fix a fresh machine failed with
+"forbidden path" and boot silently degraded.
+
+## 6. CI
 
 `.github/workflows/ci.yml` runs `lint → typecheck → unit tests (core, ai,
 mcp incl. conformance) → MCP conformance → Playwright e2e → build check`.
@@ -91,7 +128,7 @@ Status at the commit tagged by this documentation: **`test` green**;
 CodeQL reports "code scanning is not enabled for this repository" — a repo
 setting, not a code issue.
 
-## 6. Privacy-relevant proof
+## 7. Privacy-relevant proof
 
 - Snapshot storage is file-first: `.palimpsest/` beside the documents; the
   docs remain plain `.md` readable by any tool.

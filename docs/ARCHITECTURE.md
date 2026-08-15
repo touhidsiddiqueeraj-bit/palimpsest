@@ -51,6 +51,15 @@ the diff algorithm and UX touches; the diff golden suite pins its behavior.
   `reindex()` — losing the database costs nothing but time.
 - `restore` writes the restored text and records the pre-restore state as a
   snapshot, so restores are themselves reversible.
+- **External edits are never silently adopted.** When a document opens (or a
+  milestone is requested), the current file text is diffed against the last
+  snapshot; changes made by other editors, git, or agents are captured as
+  `external change` auto-snapshots first.
+- **Opening from the file manager.** The desktop registers
+  `MimeType=text/markdown` + `%F` via a `.desktop` template (deb/rpm), takes
+  a file argument, and re-opens the persisted workspace on a no-argument
+  launch. Runtime fs scope must allow the `.palimpsest` tree explicitly —
+  Tauri's recursive `dir/**` glob does not match dot-directories.
 
 ## Recall: context-budget-aware memory
 

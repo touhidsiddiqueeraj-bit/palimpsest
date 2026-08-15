@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   createHistoryStore,
   diffProse,
@@ -16,7 +16,7 @@ import { htmlToMarkdown } from './convert';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { mkdir, readDir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { appDataDir } from '@tauri-apps/api/path';
+import { appDataDir, basename, dirname } from '@tauri-apps/api/path';
 import {
   createClient,
   inlineEdit,
@@ -32,6 +32,7 @@ const INITIAL_TS = Date.now() - 1000 * 60 * 60 * 24;
 
 export default function App() {
   const [store, setStore] = useState<HistoryStore | null>(null);
+  const storeRef = useRef<HistoryStore | null>(null);
   const [docId, setDocId] = useState<number | null>(null);
   const [text, setText] = useState('');
   const [snaps, setSnaps] = useState<SnapshotInfo[]>([]);
@@ -59,6 +60,39 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const searchTimer = useRef<number | null>(null);
+  const [fileQuery, setFileQuery] = useState('');
+  const [fileResults, setFileResults] = useState<SearchHit[]>([]);
+  const fileSearchTimer = useRef<number | null>(null);
+  const fileSearchRef = useRef<HTMLInputElement | null>(null);
+  const [collapsed, setCollapsed] = useState(() => {
+    const def = { docs: false, hist: false, editor: false, preview: false };
+    try {
+      const c = { ...def, ...(JSON.parse(localStorage.getItem('palimpsest.panels') ?? '{}') as object) };
+      if (c.editor && c.preview) c.preview = false;
+      return c;
+    } catch {
+      return def;
+    }
+  });
+  const [diffA, setDiffA] = useState<number | null>(null);
+  const [diffB, setDiffB] = useState<number | 'current'>('current');
+  const [diff, setDiff] = useState<{
+    fromLabel: string;
+    toLabel: string;
+    added: number;
+    removed: number;
+    html: string;
+  } | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [splitPct, setSplitPct] = useState(() => {
+    const n = Number(localStorage.getItem('palimpsest.split'));
+    return Number.isFinite(n) && n > 20 && n < 80 ? n : 50;
+  });
+  const panesRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startPct: number;
+  } | null>(null);
   const [links, setLinks] = useState<Array<{ from: string; to: string }>>([]);
   const [fenceMsg, setFenceMsg] = useState<string | null>(null);
   const [proposal, setProposal] = useState<{
@@ -101,10 +135,12 @@ export default function App() {
     wsRef.current = workspace;
     const fs = snapshotFs(workspace);
     await mkdir(workspace, { recursive: true });
+    await mkdir(`${workspace}/.palimpsest`, { recursive: true });
     const db = await sqliteDb(`${workspace}/.palimpsest/index.db`);
     const s = createHistoryStore(db, fs);
     await s.init();
     setStore(s);
+    storeRef.current = s;
     const entries = await readDir(workspace);
     const mds = entries
       .filter((e) => e.name.endsWith('.md'))
@@ -142,6 +178,12 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
+        const opened = await invoke<[string, string] | null>('initial_open');
+        if (opened) {
+          await openWorkspace(opened[0]);
+          await openDoc(opened[1]);
+          return;
+        }
         const saved = await invoke<string | null>('get_workspace');
         const workspace = saved ?? (await `${await appDataDir()}/palimpsest-demo`);
         await openWorkspace(workspace);
@@ -175,20 +217,39 @@ export default function App() {
     writeTextFile(`${wsRef.current}/${name}`, v).catch(() => {});
   };
 
+  const clearDiff = () => {
+    setDiff(null);
+    setDiffA(null);
+    setDiffB('current');
+  };
+
+  /** Open a standalone .md file anywhere: workspace becomes its folder, edits save in place. */
+  const openFile = async () => {
+    const path = await open({ filters: [{ name: 'Markdown', extensions: ['md'] }] });
+    if (!path) return;
+    const dir = await dirname(path);
+    const name = await basename(path);
+    await openWorkspace(dir);
+    await openDoc(name);
+  };
+
   const openDoc = async (name: string) => {
-    if (!store || !wsRef.current) return;
+    const s = storeRef.current;
+    if (!s || !wsRef.current) return;
     let t = INITIAL;
     try {
       t = await readTextFile(`${wsRef.current}/${name}`);
     } catch {
       /* freshly created doc */
     }
-    const doc = await store.getOrCreateDoc(name, name);
+    const doc = await s.getOrCreateDoc(name, name);
     docNamesRef.current.set(doc.id, name);
+    await s.reconcile(doc.id, t);
     lastLen.current = t.length;
     setActiveDoc(name);
     setSelected(null);
     setPreview(null);
+    clearDiff();
     setDocId(doc.id);
     setText(t);
     await refreshSnaps(doc.id);
@@ -215,6 +276,7 @@ export default function App() {
       setPreview(null);
       setSearchQuery('');
       setSearchResults([]);
+      clearDiff();
       await openWorkspace(picked);
     } catch (e) {
       setErr(String(e));
@@ -225,6 +287,12 @@ export default function App() {
     if (!store || docId === null) return;
     const label = window.prompt('Name this moment', new Date().toLocaleString());
     if (!label) return;
+    const external = await store.reconcile(docId, text);
+    const latest = snaps[0];
+    if (latest && external === null && (await store.get(docId, latest.id)).text === text) {
+      alert('No changes since the last snapshot — milestone not recorded.');
+      return;
+    }
     await store.capture(docId, text, 'milestone', label);
     persistLive(docId, text);
     lastLen.current = text.length;
@@ -279,11 +347,87 @@ export default function App() {
 
   const onSearchOpen = async (r: (typeof searchResults)[number]) => {
     if (r.source === 'history' && r.snapshotId && r.docId) {
+      clearDiff();
       setSelected(r.snapshotId);
+      if (viewMode === 'write') setViewMode('split');
       const snap = await store!.get(r.docId, r.snapshotId);
       setPreview(snap.text);
     } else {
       await openDoc(r.docName);
+    }
+  };
+
+  useEffect(() => {
+    localStorage.setItem('palimpsest.panels', JSON.stringify(collapsed));
+  }, [collapsed]);
+
+  const togglePane = (k: 'docs' | 'hist') => () => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
+  const toggleSplit = (k: 'editor' | 'preview') => () =>
+    setCollapsed((c) => {
+      const next = { ...c, [k]: !c[k] };
+      if (next.editor && next.preview) next[k === 'editor' ? 'preview' : 'editor'] = false;
+      return next;
+    });
+
+  const onFileSearch = (q: string) => {
+    setFileQuery(q);
+    if (fileSearchTimer.current) window.clearTimeout(fileSearchTimer.current);
+    fileSearchTimer.current = window.setTimeout(async () => {
+      if (!q.trim() || !store || !docId) {
+        setFileResults([]);
+        return;
+      }
+      try {
+        const hits = await store.search(q, 30, true);
+        const name = docNamesRef.current.get(docId);
+        setFileResults(hits.filter((h) => h.docName === name));
+      } catch {
+        setFileResults([]);
+      }
+    }, 250);
+  };
+
+  const loadDiff = async () => {
+    if (!store || docId === null || diffA === null) {
+      setDiff(null);
+      return;
+    }
+    const label = (id: number | 'current') =>
+      id === 'current'
+        ? 'current'
+        : (filtered.find((s) => s.id === id)?.label ?? `#${id}`);
+    const r = await store.diff(docId, diffA, diffB, text);
+    setDiff({
+      fromLabel: label(diffA),
+      toLabel: label(diffB),
+      added: r.added,
+      removed: r.removed,
+      html: r.html,
+    });
+  };
+
+  useEffect(() => {
+    void loadDiff();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diffA, diffB, docId]);
+
+  useEffect(() => {
+    if (diff && diffB === 'current') void loadDiff();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+
+  const onRestoreDiff = async () => {
+    if (!store || docId === null || diffB === 'current' || !diff) return;
+    setBusy(true);
+    try {
+      const r = await store.restore(docId, diffB as number, text, `Diff restore → ${diff.toLabel}`);
+      setText(r.text);
+      persistLive(docId, r.text);
+      setDiff(null);
+      setPreview(null);
+      await refreshSnaps(docId);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -331,6 +475,11 @@ export default function App() {
   const paletteItems = useMemo(() => {
     const items: Array<{ label: string; hint?: string; run: () => void }> = [
       ...docs.map((d) => ({ label: 'Open ' + d, run: () => void openDoc(d) })),
+      {
+        label: 'Open file…',
+        hint: 'ctrl+o',
+        run: () => void openFile(),
+      },
       {
         label: 'New document',
         run: () => {
@@ -552,6 +701,26 @@ export default function App() {
     [snaps, kindFilter],
   );
 
+  const previewSnap = selected !== null ? snaps.find((s) => s.id === selected) : undefined;
+
+  const grouped = useMemo(() => {
+    const groups: Array<{ day: string; items: SnapshotInfo[] }> = [];
+    for (const s of filtered) {
+      const day = new Date(s.ts).toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      });
+      const last = groups[groups.length - 1];
+      if (last && last.day === day) last.items.push(s);
+      else groups.push({ day, items: [s] });
+    }
+    return groups;
+  }, [filtered]);
+
+  const dotClass = (kind: string) =>
+    kind === 'milestone' ? 'dot-milestone' : kind === 'ai' ? 'dot-ai' : '';
+
   const onRename = async (s: SnapshotInfo) => {
     if (!store || docId === null) return;
     const label = window.prompt('Milestone name', s.label || '');
@@ -587,6 +756,15 @@ export default function App() {
         setPaletteOpen((v) => !v);
         return;
       }
+      if (mod && k === 'o') {
+        e.preventDefault();
+        void openFile();
+        return;
+      }
+      if (e.key === 'Escape' && diff) {
+        clearDiff();
+        return;
+      }
       if (mod && e.shiftKey && k === 'm') {
         e.preventDefault();
         void createMilestone();
@@ -610,14 +788,43 @@ export default function App() {
       }
       if (e.ctrlKey && e.shiftKey && k === 'f') {
         e.preventDefault();
-        searchInputRef.current?.focus();
+        fileSearchRef.current?.focus();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const diffWords = useMemo(() => diffProse(INITIAL, text), [text]);
+  const diffWords = useMemo(() => {
+    const r = diffProse(preview ?? INITIAL, text);
+    return {
+      removed: r.removed,
+      added: r.added,
+      base: preview !== null ? 'vs snapshot' : 'vs baseline',
+    };
+  }, [text, preview]);
+
+  /** makeSnippet marks the first match as [term] — render it as <mark>. */
+  const renderSnippet = (snippet: string): ReactNode => {
+    const m = snippet.match(/\[([^\]]*)\]/);
+    if (!m || m.index === undefined) return snippet;
+    return (
+      <>
+        {snippet.slice(0, m.index)}
+        <mark>{m[1]}</mark>
+        {snippet.slice(m.index + m[0].length)}
+      </>
+    );
+  };
+
+  const statusChip = (
+    status: string | undefined,
+  ): { cls: string; label: string } | null =>
+    status === 'modified'
+      ? { cls: 'chip-mod', label: 'changed' }
+      : status === 'deleted'
+        ? { cls: 'chip-del', label: 'gone' }
+        : null;
 
   if (err) {
     return (
@@ -641,40 +848,104 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col" data-theme={theme}>
       <header className="flex items-center gap-4 border-b border-stone-200 px-4 py-2 text-sm">
+        <div className="relative">
+          <button
+            className="rounded border border-stone-300 px-2 py-0.5 text-xs hover:bg-stone-100"
+            onClick={() => setMoreOpen((v) => !v)}
+            title="Menu"
+          >
+            …
+          </button>
+          {moreOpen && (
+            <div
+              className="absolute left-0 top-full z-40 mt-1 w-44 rounded border border-stone-200 bg-white p-1 text-xs shadow-lg"
+              onMouseLeave={() => setMoreOpen(false)}
+            >
+              {(
+                [
+                  ['Open file…', () => void openFile(), 'Ctrl+O'],
+                  ['Import', () => void onImport(), 'Ctrl+Shift+I'],
+                  ['Export HTML', () => void onExport(), 'Alt+L'],
+                  ['Print / PDF', onPrintPdf, ''],
+                ] as const
+              ).map(([label, run, hint]) => (
+                <button
+                  key={label}
+                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-stone-100"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    run();
+                  }}
+                >
+                  <span>{label}</span>
+                  {hint && <span className="text-[10px] text-stone-400">{hint}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <h1 className="font-semibold">Palimpsest</h1>
         <span className="text-stone-500">{activeDoc}</span>
         <span className="text-stone-400">
-          · {diffWords.removed} removed, {diffWords.added} added vs v0
+          · {diffWords.base}: <span className="d-del">−{diffWords.removed}</span>{' '}
+          <span className="d-add">+{diffWords.added}</span>
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <div className="relative">
+            <input
+              ref={fileSearchRef}
+              value={fileQuery}
+              onChange={(e) => onFileSearch(e.target.value)}
+              onBlur={() => setTimeout(() => setFileResults([]), 150)}
+              placeholder={`search ${activeDoc}…`}
+              title="Search current file + its history (Ctrl+Shift+F)"
+              className="w-52 rounded border border-stone-300 px-2 py-0.5 text-xs outline-none focus:border-stone-500"
+            />
+            {(fileResults.length > 0 || (fileQuery.trim() && fileResults.length === 0)) && (
+              <ul className="absolute right-0 top-full z-40 mt-1 max-h-72 w-96 overflow-y-auto rounded border border-stone-200 bg-white p-1 text-xs shadow-lg">
+                {fileResults.length === 0 && (
+                  <li className="px-2 py-1 text-stone-400">No matches in {activeDoc}</li>
+                )}
+                {fileResults.map((r, i) => (
+                  <li key={`${r.docName}-${i}`}>
+                    <button
+                      onClick={() => void onSearchOpen(r)}
+                      className="w-full rounded px-2 py-1 text-left hover:bg-stone-100"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <span className="block flex-1 truncate">
+                          {r.source === 'history' ? `snapshot ${r.snapshotId}` : r.docName}
+                        </span>
+                        {r.status !== 'current' && statusChip(r.status) && (
+                          <span className={`chip ${statusChip(r.status)!.cls}`}>
+                            {statusChip(r.status)!.label}
+                          </span>
+                        )}
+                      </span>
+                      <span className="block truncate text-[10px] text-stone-500">
+                        {renderSnippet(r.snippet)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <div className="flex overflow-hidden rounded border border-stone-300 text-xs">
             {(['write', 'split', 'read'] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setViewMode(m)}
-                className={`px-2 py-0.5 ${viewMode === m ? 'bg-stone-900 text-white' : 'hover:bg-stone-100'}`}
+                className={`px-2 py-0.5 ${viewMode === m ? 'active-seg' : 'hover:bg-stone-100'}`}
               >
                 {m}
               </button>
             ))}
           </div>
-          <button
-            className="text-xs underline"
-            onClick={() => void onImport()}
-            title="Ctrl+Shift+I"
-          >
-            Import
-          </button>
-          <button className="text-xs underline" onClick={() => void onExport()} title="Alt+L">
-            Export HTML
-          </button>
-          <button className="text-xs underline" onClick={onPrintPdf} title="Print or save as PDF">
-            Print
-          </button>
           <button className="text-xs underline" onClick={toggleTheme} title="Toggle theme">
             {theme === 'light' ? 'Dark' : 'Light'}
           </button>
-          <label className="flex items-center gap-1">
+          <label className="flex items-center gap-1" title="Block any non-local AI request">
             <input
               type="checkbox"
               checked={localOnly}
@@ -683,28 +954,42 @@ export default function App() {
             Local-only
           </label>
           <span
-            className="rounded px-2 py-0.5 text-xs"
-            title={net.dest ? `Request to ${net.dest}` : 'No network activity'}
-            style={{
-              background: net.active ? '#fef3c7' : '#f5f5f4',
-              color: net.active ? '#b45309' : '#a8a29e',
-            }}
-          >
-            {net.active ? `→ ${net.dest}` : 'offline'}
-          </span>
+            className={`net-dot ${net.active ? 'active' : 'idle'}`}
+            title={net.active ? `Request to ${net.dest}` : 'No network activity'}
+          />
         </div>
       </header>
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-44 shrink-0 overflow-y-auto border-r border-stone-200 p-3 text-sm">
+        {collapsed.docs ? (
+          <aside className="flex w-8 shrink-0 flex-col items-center border-r border-stone-200 py-2">
+            <button
+              onClick={togglePane('docs')}
+              title="Show docs"
+              className="text-stone-400 hover:text-stone-700"
+            >
+              »
+            </button>
+          </aside>
+        ) : (
+          <aside className="w-44 shrink-0 overflow-y-auto border-r border-stone-200 p-3 text-sm">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="font-semibold">Docs</h2>
-            <button
-              className="text-xs text-stone-400 underline hover:text-stone-600"
-              onClick={() => void changeWorkspace()}
-              title="Choose a different workspace folder"
-            >
-              change…
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className="text-xs text-stone-400 underline hover:text-stone-600"
+                onClick={() => void changeWorkspace()}
+                title="Choose a different workspace folder"
+              >
+                change…
+              </button>
+              <button
+                onClick={togglePane('docs')}
+                title="Hide docs"
+                className="text-stone-400 hover:text-stone-700"
+              >
+                «
+              </button>
+            </div>
           </div>
           <ul className="space-y-1">
             {docs.map((d) => (
@@ -722,6 +1007,11 @@ export default function App() {
               </li>
             ))}
           </ul>
+          {docs.length === 0 && (
+            <p className="text-xs text-stone-400">
+              No markdown files here — create one above or use Open file… (Ctrl+O).
+            </p>
+          )}
           <div className="mt-3 flex gap-1">
             <input
               value={newDocName}
@@ -758,26 +1048,24 @@ export default function App() {
                       className="w-full rounded px-1.5 py-0.5 text-left hover:bg-stone-100"
                       title={r.snippet}
                     >
-                      <span className="truncate text-xs">
-                        {r.docName}
-                        {r.source === 'history' && (
-                          <span
-                            className={
-                              'ml-1 rounded px-1 text-[10px] ' +
-                              (r.status === 'deleted'
-                                ? 'bg-red-100 text-red-600'
-                                : 'bg-amber-100 text-amber-600')
-                            }
-                          >
-                            {r.status}
+                      <span className="flex items-center gap-1 truncate text-xs">
+                        <span className="flex-1 truncate">{r.docName}</span>
+                        {r.status !== 'current' && statusChip(r.status) && (
+                          <span className={`chip ${statusChip(r.status)!.cls}`}>
+                            {statusChip(r.status)!.label}
                           </span>
                         )}
                       </span>
-                      <span className="block truncate text-[10px] text-stone-500">{r.snippet}</span>
+                      <span className="block truncate text-[10px] text-stone-500">
+                        {renderSnippet(r.snippet)}
+                      </span>
                     </button>
                   </li>
                 ))}
               </ul>
+            )}
+            {searchQuery.trim() && searchResults.length === 0 && (
+              <p className="mt-1 text-[10px] text-stone-400">No matches in workspace</p>
             )}
           </div>
           {outline.length > 0 && (
@@ -800,29 +1088,32 @@ export default function App() {
             </div>
           )}
         </aside>
-        <aside className="w-80 overflow-y-auto border-r border-stone-200 p-3 text-sm">
+        )}
+        {collapsed.hist ? (
+          <aside className="flex w-8 shrink-0 flex-col items-center border-r border-stone-200 py-2">
+            <button
+              onClick={togglePane('hist')}
+              title="Show history"
+              className="text-stone-400 hover:text-stone-700"
+            >
+              »
+            </button>
+          </aside>
+        ) : (
+          <aside className="w-80 shrink-0 overflow-y-auto border-r border-stone-200 p-3 text-sm">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="font-semibold">History</h2>
-            <span className="text-xs text-stone-400">{snaps.length}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-stone-400">{snaps.length}</span>
+              <button
+                onClick={togglePane('hist')}
+                title="Hide history"
+                className="text-stone-400 hover:text-stone-700"
+              >
+                «
+              </button>
+            </div>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(0, filtered.length - 1)}
-            value={
-              selected === null
-                ? 0
-                : Math.max(
-                    0,
-                    filtered.findIndex((s) => s.id === selected),
-                  )
-            }
-            onChange={(e) => {
-              const s = filtered[Number(e.target.value)];
-              if (s) void openPreview(s.id);
-            }}
-            className="w-full"
-          />
           <div className="mt-2 flex flex-wrap gap-1">
             {(['all', 'auto', 'milestone', 'system', 'ai'] as const).map((k) => (
               <button
@@ -836,32 +1127,91 @@ export default function App() {
               </button>
             ))}
           </div>
-          <ul className="mt-2 space-y-1">
-            {filtered.map((s) => (
-              <li key={s.id}>
-                <button
-                  onClick={() => void openPreview(s.id)}
-                  onDoubleClick={() => s.kind === 'milestone' && void onRename(s)}
-                  title={s.kind === 'milestone' ? 'Double-click to rename' : undefined}
-                  className={`w-full rounded px-2 py-1 text-left hover:bg-stone-100 ${
-                    selected === s.id ? 'bg-stone-200' : ''
-                  }`}
-                >
-                  <span className="block truncate">
-                    {s.label || s.kind}
-                    {s.status === 'deleted'
-                      ? ' (gone)'
-                      : s.status === 'modified'
-                        ? ' (changed)'
-                        : ''}
-                  </span>
-                  <span className="block text-xs text-stone-400">
-                    {new Date(s.ts).toLocaleString()} · {s.words} words · {s.kind}
-                  </span>
-                </button>
-              </li>
+          <div className="mt-2 flex items-center gap-1 text-xs">
+            <span className="shrink-0 text-stone-400">diff</span>
+            <select
+              value={diffA ?? ''}
+              onChange={(e) => setDiffA(e.target.value ? Number(e.target.value) : null)}
+              className="min-w-0 flex-1 rounded border border-stone-300 bg-transparent px-1 py-0.5 text-xs outline-none"
+              title="Base snapshot"
+            >
+              <option value="">A…</option>
+              {filtered.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label || s.kind} · {new Date(s.ts).toLocaleTimeString()}
+                </option>
+              ))}
+            </select>
+            <span className="text-stone-400">→</span>
+            <select
+              value={diffB === 'current' ? 'current' : diffB ?? ''}
+              onChange={(e) => setDiffB(e.target.value === 'current' ? 'current' : Number(e.target.value))}
+              className="min-w-0 flex-1 rounded border border-stone-300 bg-transparent px-1 py-0.5 text-xs outline-none"
+              title="Target snapshot"
+            >
+              <option value="current">current</option>
+              {filtered.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label || s.kind} · {new Date(s.ts).toLocaleTimeString()}
+                </option>
+              ))}
+            </select>
+          </div>
+          {diff && (
+            <div className="mt-1 text-[10px] text-stone-500">
+              +{diff.added} added · −{diff.removed} removed
+            </div>
+          )}
+          <div className="mt-2 space-y-2">
+            {snaps.length === 0 && (
+              <p className="text-xs text-stone-400">
+                No history yet — Palimpsest snapshots automatically as you write.
+              </p>
+            )}
+            {grouped.map((g) => (
+              <div key={g.day} className="day-group">
+                <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                  {g.day}
+                </h3>
+                <ul className="space-y-1">
+                  {g.items.map((s) => {
+                    const chip = statusChip(s.status);
+                    return (
+                      <li key={s.id}>
+                        <button
+                          onClick={() => {
+                            clearDiff();
+                            if (viewMode === 'write') setViewMode('split');
+                            void openPreview(s.id);
+                          }}
+                          onDoubleClick={() => s.kind === 'milestone' && void onRename(s)}
+                          title={s.kind === 'milestone' ? 'Double-click to rename' : undefined}
+                          className={`w-full rounded px-2 py-1 text-left hover:bg-stone-100 ${
+                            selected === s.id ? 'bg-stone-200' : ''
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <span className={`dot ${dotClass(s.kind)}`} />
+                            <span
+                              className={`block flex-1 truncate ${
+                                s.kind === 'milestone' ? 'font-semibold' : ''
+                              }`}
+                            >
+                              {s.label || s.kind}
+                            </span>
+                            {chip && <span className={`chip ${chip.cls}`}>{chip.label}</span>}
+                          </span>
+                          <span className="block pl-3.5 text-xs text-stone-400">
+                            {new Date(s.ts).toLocaleTimeString()} · {s.words}w · {s.kind}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
           <div className="mt-4 border-t border-stone-200 pt-3">
             <div className="mb-2 flex gap-1">
               {(['edit', 'chat', 'links'] as const).map((t) => (
@@ -919,7 +1269,7 @@ export default function App() {
                     </label>
                     <div className="mt-2 flex items-center gap-2">
                       <button
-                        className="rounded bg-stone-900 px-2 py-1 text-white hover:bg-stone-700"
+                        className="btn-primary"
                         onClick={saveAiCfg}
                       >
                         Save
@@ -945,7 +1295,7 @@ export default function App() {
                 />
                 <div className="mt-1 flex gap-2">
                   <button
-                    className="rounded bg-stone-900 px-2 py-1 text-xs text-white hover:bg-stone-700 disabled:opacity-50"
+                    className="btn-primary"
                     onClick={() => void onPropose()}
                     disabled={aiBusy || !prompt.trim()}
                   >
@@ -998,7 +1348,7 @@ export default function App() {
                     placeholder={`Ask AI · ${provider.model}`}
                   />
                   <button
-                    className="rounded bg-stone-900 px-2 py-1 text-xs text-white hover:bg-stone-700 disabled:opacity-50"
+                    className="btn-primary"
                     onClick={() => void onSend()}
                     disabled={chatBusy || !chatInput.trim()}
                   >
@@ -1041,6 +1391,7 @@ export default function App() {
             )}
           </div>
         </aside>
+        )}
         <main className="flex min-h-0 flex-1 flex-col">
           {viewMode !== 'read' && (
             <div className="flex flex-wrap items-center gap-1 border-b border-stone-200 px-2 py-1">
@@ -1054,19 +1405,54 @@ export default function App() {
                   {label}
                 </button>
               ))}
-              <label className="ml-auto flex items-center gap-1 text-xs text-stone-500">
-                <input
-                  type="checkbox"
-                  checked={typewriter}
-                  onChange={(e) => setTypewriter(e.target.checked)}
-                />
-                Typewriter
-              </label>
+              {viewMode === 'split' && (
+                <>
+                  <button
+                    onClick={toggleSplit('editor')}
+                    className={`rounded border px-1.5 py-0.5 text-xs ${
+                      collapsed.editor
+                        ? 'border-stone-300 text-stone-400'
+                        : 'border-stone-700 text-stone-900'
+                    }`}
+                    title="Toggle editor pane"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={toggleSplit('preview')}
+                    className={`rounded border px-1.5 py-0.5 text-xs ${
+                      collapsed.preview
+                        ? 'border-stone-300 text-stone-400'
+                        : 'border-stone-700 text-stone-900'
+                    }`}
+                    title="Toggle preview pane"
+                  >
+                    Preview
+                  </button>
+                </>
+              )}
             </div>
           )}
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-            {viewMode !== 'read' && (
-              <div className={viewMode === 'split' ? 'w-1/2 min-w-0' : 'flex-1 min-w-0'}>
+          <div
+            ref={panesRef}
+            className="flex min-h-0 flex-1 overflow-hidden"
+            onPointerMove={(e) => {
+              if (!dragRef.current || !panesRef.current) return;
+              const rect = panesRef.current.getBoundingClientRect();
+              const pct = ((e.clientX - rect.left) / rect.width) * 100;
+              setSplitPct(Math.min(80, Math.max(20, pct)));
+            }}
+            onPointerUp={() => {
+              if (!dragRef.current) return;
+              dragRef.current = null;
+              localStorage.setItem('palimpsest.split', String(splitPct));
+            }}
+          >
+            {viewMode !== 'read' && !(viewMode === 'split' && collapsed.editor) && (
+              <div
+                className={viewMode === 'split' ? 'min-w-0' : 'flex-1 min-w-0'}
+                style={viewMode === 'split' ? { width: `${splitPct}%` } : undefined}
+              >
                 <CodeEditor
                   key={`${activeDoc}:${theme}`}
                   value={text}
@@ -1076,20 +1462,80 @@ export default function App() {
                 />
               </div>
             )}
-            {viewMode !== 'write' && (
+            {viewMode === 'split' && !collapsed.editor && !collapsed.preview && (
+              <div
+                className={`split-divider ${dragRef.current ? 'dragging' : ''}`}
+                title="Drag to resize"
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  dragRef.current = { startX: e.clientX, startPct: splitPct };
+                }}
+              />
+            )}
+            {viewMode !== 'write' && !(viewMode === 'split' && collapsed.preview) && (
               <div
                 ref={previewRef}
                 className={
                   viewMode === 'split'
-                    ? 'w-1/2 overflow-y-auto border-l border-stone-200 p-4 text-sm'
-                    : 'flex-1 overflow-y-auto p-4 text-sm'
+                    ? 'min-w-0 flex-1 overflow-y-auto border-l border-stone-200 p-4'
+                    : 'flex-1 overflow-y-auto p-4'
                 }
               >
-                <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                <div className={`preview-pane ${diff ? 'diff-view' : ''}`}>
+                  {diff ? (
+                    <>
+                      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-stone-200 bg-stone-50 p-2 text-xs">
+                        <span className="text-stone-500">
+                          Diff: <b className="text-stone-800">{diff.fromLabel}</b> →{' '}
+                          <b className="text-stone-800">{diff.toLabel}</b>
+                        </span>
+                        <span className="d-add">+{diff.added}</span>
+                        <span className="d-del">−{diff.removed}</span>
+                        {diffB !== 'current' && (
+                          <button
+                            className="underline hover:text-stone-900"
+                            onClick={() => void onRestoreDiff()}
+                            disabled={busy}
+                          >
+                            restore → {diff.toLabel}
+                          </button>
+                        )}
+                        {diffB !== 'current' && (
+                          <button
+                            className="underline hover:text-stone-900"
+                            onClick={() => {
+                              const a = diffA;
+                              setDiffA(diffB as number);
+                              setDiffB(a!);
+                            }}
+                          >
+                            swap
+                          </button>
+                        )}
+                        <button
+                          className="btn-primary ml-auto"
+                          onClick={clearDiff}
+                          title="Esc"
+                        >
+                          Back to document
+                        </button>
+                      </div>
+                      <div dangerouslySetInnerHTML={{ __html: diff.html }} />
+                    </>
+                  ) : (
+                    <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                  )}
+                </div>
                 {fenceMsg && <div className="mt-2 text-xs text-stone-500">{fenceMsg}</div>}
                 {preview !== null && (
                   <div className="mt-4 border-t border-stone-200 pt-2 text-xs text-stone-400">
-                    Previewing snapshot —{' '}
+                    <span>
+                      Previewing snapshot
+                      {previewSnap
+                        ? ` · ${new Date(previewSnap.ts).toLocaleTimeString()} · ${previewSnap.words}w`
+                        : ''}
+                      {preview === text ? ' · identical to current' : ''}
+                    </span>{' '}
                     <button
                       className="underline"
                       onClick={() => selected !== null && void onRestore(selected)}
@@ -1106,12 +1552,21 @@ export default function App() {
             )}
           </div>
           <footer className="flex items-center gap-3 border-t border-stone-200 px-3 py-1 text-xs text-stone-400">
+            <label className="flex items-center gap-1 text-stone-500" title="Cursor stays centered while typing">
+              <input
+                type="checkbox"
+                checked={typewriter}
+                onChange={(e) => setTypewriter(e.target.checked)}
+              />
+              Typewriter
+            </label>
             <span>
               {words} words · {text.length} chars · {Math.max(1, Math.round(words / 200))} min read
             </span>
             <span className="ml-auto">{activeDoc}</span>
             <span title={`${snaps.length} snapshots recorded`}>{snaps.length} snapshots</span>
-            <span title="Ctrl+S to save now">
+            <span className="flex items-center gap-1" title="Ctrl+S to save now">
+              <span className={`status-dot ${savedAt ? 'saved' : 'dirty'}`} />
               {savedAt ? `saved ${new Date(savedAt).toLocaleTimeString()}` : 'unsaved'}
             </span>
           </footer>

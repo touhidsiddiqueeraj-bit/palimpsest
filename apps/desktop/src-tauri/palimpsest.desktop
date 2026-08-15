@@ -1,0 +1,10 @@
+[Desktop Entry]
+Categories=Utility;TextEditor;
+Comment=The Markdown editor with a memory
+Exec=palimpsest %F
+MimeType=text/markdown;text/x-markdown;
+Name=Palimpsest
+StartupWMClass=palimpsest
+Icon=palimpsest
+Terminal=false
+Type=Application

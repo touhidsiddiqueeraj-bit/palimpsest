@@ -3,7 +3,7 @@
 > The Markdown editor with a memory. Word-level time travel for prose, with AI that proposes instead of rewrites — and an MCP spine so agents get the same guarantees humans get.
 
 [![CI](https://github.com/touhidsiddiqueeraj-bit/palimpsest/actions/workflows/ci.yml/badge.svg)](https://github.com/touhidsiddiqueeraj-bit/palimpsest/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-core%2043%20·%20ai%209%20·%20mcp%2010-green)](docs/VERIFICATION.md)
+[![Tests](https://img.shields.io/badge/tests-core%2045%20·%20ai%209%20·%20mcp%2018-green)](docs/VERIFICATION.md)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/touhidsiddiqueeraj-bit/palimpsest)](https://github.com/touhidsiddiqueeraj-bit/palimpsest/releases)
 
@@ -42,6 +42,10 @@ files (the source of truth) with SQLite/FTS5 as a rebuildable index.
 
 - **Word-level time travel** — automatic snapshots when you pause, named
   milestones, prose-aware diffs (rewrapping a paragraph changes zero words).
+  External edits — your other editor, git, an agent — are captured as auto
+  snapshots too: open any `.md` from your file manager ("Open with…",
+  double-click, or `palimpsest <file>`) and you land in the middle of its
+  full history, never at a blank start.
 - **History drawer** — timeline, per-snapshot "View changes", restore
   anything fearlessly (restores are themselves snapshotted).
 - **AI proposes, the diff decides** — inline edits, autocomplete, critique

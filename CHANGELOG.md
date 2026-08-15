@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Desktop: open any `.md` from the file manager — "Open with…", double-click,
+  or `palimpsest <file>`. The OS registration ships in the installers
+  (`palimpsest.desktop`: `MimeType=text/markdown;text/x-markdown;`,
+  `Categories=Utility;TextEditor;`, `Exec=palimpsest %F`), and the last
+  workspace is persisted (`workspace.txt`) so a no-argument launch reopens
+  your documents.
+- Desktop: external edits are captured before a document opens (reconcile) —
+  changes made by other editors, git, or agents become snapshots instead of
+  being silently adopted. Workspace access now allows the `.palimpsest`
+  history tree explicitly (Tauri's recursive `dir/**` glob never matches
+  dot-directories, so the history dir was previously a "forbidden path" and
+  boot could silently fail on a fresh machine).
+- MCP: `create_milestone` no-ops when nothing changed since the last
+  snapshot (`{noop:true, latest_snapshot_id, captured_external_change}`);
+  external file edits are captured as auto snapshots when a doc is opened or
+  a milestone is requested (documented in `--help`).
+
+### Fixed
+
+- Desktop: first-launch/double-click boot bug — the open handler closed over
+  a pre-boot (null) store and silently skipped reconcile, leaving the opened
+  document without its snapshot history. The handler now reads the store via
+  a ref that is populated when the workspace opens.
+- MCP: `smoke.mjs` updated for the milestone no-op contract — the manual
+  smoke (13 checks) is green again against the bundled CLI.
+
 - MCP: document names accept with or without the `.md` suffix across every
   tool (`create_doc("X")` now pairs with `get_document("X")` / `apply_edit("X")`
   / `get_stats("X")`); missing names always error as
