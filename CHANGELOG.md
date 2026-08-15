@@ -21,10 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   history tree explicitly (Tauri's recursive `dir/**` glob never matches
   dot-directories, so the history dir was previously a "forbidden path" and
   boot could silently fail on a fresh machine).
-- MCP: `create_milestone` no-ops when nothing changed since the last
-  snapshot (`{noop:true, latest_snapshot_id, captured_external_change}`);
-  external file edits are captured as auto snapshots when a doc is opened or
-  a milestone is requested (documented in `--help`).
+- MCP: `create_milestone` never silently discards the request — an unchanged
+  doc gets the milestone label attached to its latest snapshot
+  (`{snapshot_id, reused_snapshot:true}`) instead of a success-shaped no-op
+  that agents misreport as done; external file edits are still captured as
+  auto snapshots when a doc is opened or a milestone is requested
+  (documented in `--help`).
 
 ### Fixed
 
@@ -32,8 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a pre-boot (null) store and silently skipped reconcile, leaving the opened
   document without its snapshot history. The handler now reads the store via
   a ref that is populated when the workspace opens.
-- MCP: `smoke.mjs` updated for the milestone no-op contract — the manual
-  smoke (13 checks) is green again against the bundled CLI.
+- Desktop: split view — removed the Edit/Preview pane-toggle buttons from
+  the formatting toolbar (clicking "Preview" collapsed the preview pane,
+  reading as a broken split); split is a plain two-column layout again, with
+  the invisible drag-resize divider.
+- MCP: `smoke.mjs` updated for the label-latest milestone contract — the
+  manual smoke (13 checks) is green again against the bundled CLI.
 
 - MCP: document names accept with or without the `.md` suffix across every
   tool (`create_doc("X")` now pairs with `get_document("X")` / `apply_edit("X")`

@@ -65,10 +65,9 @@ export default function App() {
   const fileSearchTimer = useRef<number | null>(null);
   const fileSearchRef = useRef<HTMLInputElement | null>(null);
   const [collapsed, setCollapsed] = useState(() => {
-    const def = { docs: false, hist: false, editor: false, preview: false };
+    const def = { docs: false, hist: false };
     try {
       const c = { ...def, ...(JSON.parse(localStorage.getItem('palimpsest.panels') ?? '{}') as object) };
-      if (c.editor && c.preview) c.preview = false;
       return c;
     } catch {
       return def;
@@ -362,12 +361,6 @@ export default function App() {
   }, [collapsed]);
 
   const togglePane = (k: 'docs' | 'hist') => () => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
-  const toggleSplit = (k: 'editor' | 'preview') => () =>
-    setCollapsed((c) => {
-      const next = { ...c, [k]: !c[k] };
-      if (next.editor && next.preview) next[k === 'editor' ? 'preview' : 'editor'] = false;
-      return next;
-    });
 
   const onFileSearch = (q: string) => {
     setFileQuery(q);
@@ -1405,32 +1398,6 @@ export default function App() {
                   {label}
                 </button>
               ))}
-              {viewMode === 'split' && (
-                <>
-                  <button
-                    onClick={toggleSplit('editor')}
-                    className={`rounded border px-1.5 py-0.5 text-xs ${
-                      collapsed.editor
-                        ? 'border-stone-300 text-stone-400'
-                        : 'border-stone-700 text-stone-900'
-                    }`}
-                    title="Toggle editor pane"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={toggleSplit('preview')}
-                    className={`rounded border px-1.5 py-0.5 text-xs ${
-                      collapsed.preview
-                        ? 'border-stone-300 text-stone-400'
-                        : 'border-stone-700 text-stone-900'
-                    }`}
-                    title="Toggle preview pane"
-                  >
-                    Preview
-                  </button>
-                </>
-              )}
             </div>
           )}
           <div
@@ -1448,7 +1415,7 @@ export default function App() {
               localStorage.setItem('palimpsest.split', String(splitPct));
             }}
           >
-            {viewMode !== 'read' && !(viewMode === 'split' && collapsed.editor) && (
+            {viewMode !== 'read' && (
               <div
                 className={viewMode === 'split' ? 'min-w-0' : 'flex-1 min-w-0'}
                 style={viewMode === 'split' ? { width: `${splitPct}%` } : undefined}
@@ -1462,7 +1429,7 @@ export default function App() {
                 />
               </div>
             )}
-            {viewMode === 'split' && !collapsed.editor && !collapsed.preview && (
+            {viewMode === 'split' && (
               <div
                 className={`split-divider ${dragRef.current ? 'dragging' : ''}`}
                 title="Drag to resize"
@@ -1472,7 +1439,7 @@ export default function App() {
                 }}
               />
             )}
-            {viewMode !== 'write' && !(viewMode === 'split' && collapsed.preview) && (
+            {viewMode !== 'write' && (
               <div
                 ref={previewRef}
                 className={

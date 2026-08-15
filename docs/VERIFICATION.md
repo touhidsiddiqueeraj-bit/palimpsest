@@ -13,7 +13,7 @@ app's own installed artifacts (deb contents, `~/.config`, `~/.local/share`).
 | Typecheck                     | 0 errors (strict TS across packages)                                   |
 | Lint + Prettier               | 0 errors / clean                                                       |
 | MCP conformance suite         | green (vitest, included in `pnpm test`)                                |
-| Live stdio server             | 13/13 smoke checks PASS (incl. milestone no-op contract)               |
+| Live stdio server             | 13/13 smoke checks PASS (incl. label-latest milestone)                |
 | Live Streamable HTTP          | get_stats / recall / get_outline over raw `fetch()`                    |
 | Registered as an opencode MCP | tools called in a running opencode session                             |
 | Desktop: file-manager open    | `xdg-open notes.md` → app boots, full history + reconcile snapshot     |
@@ -41,8 +41,8 @@ PASS get_document          {"text":"# Alpha\n\nFirst notes for the palimpsest ro
 PASS get_outline           {"doc":"docs/one.md","outline":[{"level":1,"text":"Beta"}],"tokens_used":2}
 PASS recall                status "current" · snippet "…First notes for the [palimpsest] round trip…"
 PASS milestone dry_run     {"dry_run":true,"snapshot":"# Alpha…","tokens_used":13}
-PASS milestone no-op       {"noop":true,"message":"no changes since snapshot #…","captured_external_change":null}
-PASS milestone real        {"snapshot_id":1786782702157,"tokens_used":22}   ← after an external file edit
+PASS milestone labels      {"snapshot_id":1786793367623,"reused_snapshot":true,"message":"labeled snapshot #1786793367623 as milestone \"smoke\"","captured_external_change":null}   ← unchanged doc, label attached
+PASS milestone real        {"snapshot_id":1786782776367,"tokens_used":22}   ← after an external file edit
 PASS restore dry_run       {"dry_run":true,"diff":{"added":0,"removed":0},"tokens_used":44}
 PASS create_doc            {"created":true,"doc_id":3,"document":"smoke-new.md"}
 PASS create_doc idempotent {"created":false,"doc_id":3,"document":"smoke-new.md"}
@@ -54,7 +54,8 @@ SMOKE OK
 
 The script itself seeds a clean workspace (`/tmp/opencode/md-ws/notes.md`,
 `docs/one.md`) and mutates the doc on disk mid-run to prove the external-edit
-→ snapshot path; `create_milestone` on an unchanged doc no-ops.
+→ snapshot path; `create_milestone` on an unchanged doc attaches the label to
+the latest snapshot (`reused_snapshot:true`) rather than discarding it.
 
 ## 3. MCP server — live Streamable HTTP
 
