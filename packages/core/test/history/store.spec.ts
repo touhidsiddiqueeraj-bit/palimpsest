@@ -47,8 +47,8 @@ describe('file-backed history store', () => {
       const raw = new DatabaseSync(dbPath);
       raw.exec('PRAGMA busy_timeout = 5000;');
       const db: import('../../src/history/types.js').SqliteDb = {
-        async select(sql: string, params: unknown[] = []) {
-          return raw.prepare(sql).all(...(params as never[])) as Record<string, unknown>[];
+        async select<T = Record<string, unknown>>(sql: string, params: unknown[] = []) {
+          return raw.prepare(sql).all(...(params as never[])) as T[];
         },
         async execute(sql: string, params: unknown[] = []) {
           const info = raw.prepare(sql).run(...(params as never[]));
