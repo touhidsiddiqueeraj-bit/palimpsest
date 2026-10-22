@@ -146,4 +146,44 @@ describe('inlineEdit', () => {
     expect(src).toBe('The quick brown fox jumps.');
     restore();
   });
+
+  it('strips a single outer code fence models add despite the prompt', async () => {
+    const wrapped = '```markdown\n# Title\n\nBody text.\n```';
+    const restore = mockFetch(
+      () => new Response(JSON.stringify({ message: { content: wrapped } }), { status: 200 }),
+    );
+    const c = createClient({
+      id: 'o',
+      kind: 'ollama',
+      baseUrl: 'http://127.0.0.1:11434',
+      model: 'x',
+    });
+    const { proposed } = await inlineEdit({
+      client: c,
+      instruction: 'anything',
+      document: '# Title\n\nOld body.',
+    });
+    expect(proposed).toBe('# Title\n\nBody text.');
+    restore();
+  });
+
+  it('keeps the response untouched when the source document itself starts with a fence', async () => {
+    const wrapped = '```\nfenced body\n```';
+    const restore = mockFetch(
+      () => new Response(JSON.stringify({ message: { content: wrapped } }), { status: 200 }),
+    );
+    const c = createClient({
+      id: 'o',
+      kind: 'ollama',
+      baseUrl: 'http://127.0.0.1:11434',
+      model: 'x',
+    });
+    const { proposed } = await inlineEdit({
+      client: c,
+      instruction: 'anything',
+      document: '```\noriginal fenced doc\n```',
+    });
+    expect(proposed).toBe(wrapped);
+    restore();
+  });
 });

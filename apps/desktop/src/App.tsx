@@ -1,4 +1,12 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Fragment,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   Bold,
   Code2,
@@ -65,10 +73,18 @@ export default function App() {
   const storeRef = useRef<HistoryStore | null>(null);
   const [docId, setDocId] = useState<number | null>(null);
   const [text, setText] = useState('');
+  /** Markdown re-render + word diff run on the deferred value: they are
+   * O(doc) heavy and ran on every keystroke, which stalled typing on large
+   * documents. The editor itself still updates synchronously. */
+  const deferredText = useDeferredValue(text);
   const [snaps, setSnaps] = useState<SnapshotInfo[]>([]);
   const [kindFilter, setKindFilter] = useState<'all' | SnapshotInfo['kind']>('all');
   const [selected, setSelected] = useState<number | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  /** Doc the previewed snapshot belongs to. A history search hit can come from
+   * another document; restoring it into the current one would throw (snapshot
+   * not found) — the restore button is gated on this instead. */
+  const [previewDocId, setPreviewDocId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [docs, setDocs] = useState<string[]>([]);
@@ -191,6 +207,16 @@ export default function App() {
     wsRef.current = workspace;
     docNamesRef.current.clear(); // ids are per-workspace; stale mappings would
     // misroute persistLive after a workspace switch
+    // Search state belongs to the old workspace: stale hits reference docs that
+    // don't exist here, and openDoc(getOrCreateDoc) on one would silently
+    // register a phantom document in the index.
+    setSearchQuery('');
+    setSearchResults([]);
+    setFileQuery('');
+    setFileResults([]);
+    setPaletteQuery('');
+    setPreview(null);
+    setPreviewDocId(null);
     const fs = snapshotFs(workspace);
     await mkdir(workspace, { recursive: true });
     await mkdir(`${workspace}/.palimpsest`, { recursive: true });
@@ -305,6 +331,7 @@ export default function App() {
     setActiveDoc(name);
     setSelected(null);
     setPreview(null);
+    setPreviewDocId(null);
     clearDiff();
     setDocId(doc.id);
     setText(t);
@@ -413,6 +440,7 @@ export default function App() {
     if (r.source === 'history' && r.snapshotId && r.docId) {
       clearDiff();
       setSelected(r.snapshotId);
+      setPreviewDocId(r.docId);
       if (viewMode === 'write') setViewMode('split');
       const snap = await store!.get(r.docId, r.snapshotId);
       setPreview(snap.text);
@@ -455,7 +483,7 @@ export default function App() {
     }
     const label = (id: number | 'current') =>
       id === 'current' ? 'current' : (filtered.find((s) => s.id === id)?.label ?? `#${id}`);
-    const r = await store.diff(docId, diffA, diffB, text);
+    const r = await store.diff(docId, diffA, diffB, deferredText);
     setDiff({
       fromLabel: label(diffA),
       toLabel: label(diffB),
@@ -473,7 +501,7 @@ export default function App() {
   useEffect(() => {
     if (diff && diffB === 'current') void loadDiff();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text]);
+  }, [deferredText]);
 
   const onRestoreDiff = async () => {
     if (!store || docId === null || diffB === 'current' || !diff) return;
@@ -487,6 +515,7 @@ export default function App() {
       setSavedAt(Date.now());
       setDiff(null);
       setPreview(null);
+      setPreviewDocId(null);
       await refreshSnaps(docId);
     } finally {
       setBusy(false);
@@ -794,6 +823,9 @@ export default function App() {
 
   const onRestore = async (id: number) => {
     if (!store || docId === null) return;
+    // Cross-doc previews (history search hits from other documents) are
+    // read-only: restoring a foreign snapshot into this doc is not a thing.
+    if (previewDocId !== null && previewDocId !== docId) return;
     setBusy(true);
     try {
       const r = await store.restore(docId, id, text, 'Manual restore');
@@ -803,6 +835,7 @@ export default function App() {
       lastSnapTs.current = Date.now();
       setSavedAt(Date.now());
       setPreview(null);
+      setPreviewDocId(null);
       await refreshSnaps(docId);
     } finally {
       setBusy(false);
@@ -813,13 +846,14 @@ export default function App() {
     if (!store || docId === null) return;
     const r = await store.get(docId, id);
     setPreview(r.text);
+    setPreviewDocId(docId);
     setSelected(id);
   };
 
   const previewHtml = useMemo(() => {
-    const raw = renderMarkdown(preview ?? text).html;
+    const raw = renderMarkdown(preview ?? deferredText).html;
     return decorateFences(raw);
-  }, [preview, text]);
+  }, [preview, deferredText]);
 
   useEffect(() => {
     if (!previewRef.current) return;
@@ -945,13 +979,13 @@ export default function App() {
   }, []);
 
   const diffWords = useMemo(() => {
-    const r = diffProse(preview ?? INITIAL, text);
+    const r = diffProse(preview ?? INITIAL, deferredText);
     return {
       removed: r.removed,
       added: r.added,
       base: preview !== null ? 'vs snapshot' : 'vs baseline',
     };
-  }, [text, preview]);
+  }, [deferredText, preview]);
 
   /** makeSnippet marks the first match as [term] — render it as <mark>. */
   const renderSnippet = (snippet: string): ReactNode => {
@@ -1666,11 +1700,22 @@ export default function App() {
                     <button
                       className="underline"
                       onClick={() => selected !== null && void onRestore(selected)}
-                      disabled={busy}
+                      disabled={busy || previewDocId !== docId}
+                      title={
+                        previewDocId === docId
+                          ? 'Restore this snapshot into the current document'
+                          : 'Read-only: this snapshot belongs to another document'
+                      }
                     >
                       restore this version
                     </button>
-                    <button className="ml-3 underline" onClick={() => setPreview(null)}>
+                    <button
+                      className="ml-3 underline"
+                      onClick={() => {
+                        setPreview(null);
+                        setPreviewDocId(null);
+                      }}
+                    >
                       back to current
                     </button>
                   </div>

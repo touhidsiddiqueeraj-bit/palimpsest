@@ -73,7 +73,7 @@ export const TOOLS: ToolDef[] = [
         scope: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Doc ids or names to restrict to',
+          description: 'Doc names to restrict to (with or without .md)',
         },
       },
       required: ['query'],
@@ -202,6 +202,11 @@ export const TOOLS: ToolDef[] = [
         };
       } catch (err) {
         if (err instanceof Error && err.message.startsWith('document already exists')) throw err;
+        // Only a genuinely missing file means "create it". Anything else
+        // (EACCES, a failed snapshot/write inside the overwrite path, …) must
+        // surface: the old catch-all silently re-ran the create path without
+        // the pre-overwrite snapshot the tool documents.
+        if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
         // file does not exist yet — fall through and create it
       }
       await writeFile(path, text);
@@ -269,13 +274,13 @@ export const TOOLS: ToolDef[] = [
       const { text } = await currentText(ctx, String(args.doc));
       const doc = await resolveDocName(ctx, String(args.doc));
       const target = await ctx.store.get(doc.id, Number(args.snapshot_id));
+      // One full diff pass, reused for both counts — the engine is O(blocks^2)
+      // capped; computing it twice per call doubled the cost for no reason.
+      const d = diffProse(text, target.text);
       if (args.dry_run) {
         return {
           dry_run: true,
-          diff: {
-            added: diffProse(text, target.text).added,
-            removed: diffProse(text, target.text).removed,
-          },
+          diff: { added: d.added, removed: d.removed },
           tokens_used: tokens(text) + tokens(target.text),
         };
       }
@@ -283,7 +288,7 @@ export const TOOLS: ToolDef[] = [
       await writeCurrent(ctx, String(args.doc), r.text);
       return {
         restored_to: r.afterId,
-        diff: { added: diffProse(text, r.text).added, removed: diffProse(text, r.text).removed },
+        diff: { added: d.added, removed: d.removed },
         tokens_used: tokens(text) + tokens(r.text),
       };
     },

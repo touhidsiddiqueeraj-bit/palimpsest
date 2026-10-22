@@ -123,8 +123,17 @@ function decode(text: string): string {
   return text.replace(/&(amp|lt|gt|quot|#39);/g, (m) => UNESCAPE[m] ?? m);
 }
 
-/** UTF-8-safe base64 (the deprecated escape/unescape trick breaks on non-Latin1). */
-const encodeB64 = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+/** UTF-8-safe base64 (the deprecated escape/unescape trick breaks on non-Latin1).
+ * Chunked: spreading a large Uint8Array into String.fromCharCode blows the
+ * argument limit (~125k) with a RangeError on big diagram sources. */
+const encodeB64 = (s: string): string => {
+  const bytes = new TextEncoder().encode(s);
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(out);
+};
 const decodeB64 = (s: string) =>
   new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
 
