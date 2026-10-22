@@ -6,38 +6,9 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs::FsExt;
 
-/** File opened via macOS "Open with…" (delivered as a RunEvent::Opened URL
- * string, not argv). Stashed at startup so the frontend's initial_open query
- * finds it. */
+/** File opened via macOS "Open with…" (delivered as a RunEvent::Opened URL,
+ * not argv). Stashed at startup so the frontend's initial_open query finds it. */
 struct OpenedFile(Mutex<Option<PathBuf>>);
-
-/** "file:///path/My%20Notes.md" (or a bare path) -> PathBuf, percent-decoded.
- * Only needed where RunEvent::Opened exists (macOS/iOS/Android). */
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-fn file_url_to_path(raw: &str) -> PathBuf {
-    let Some(rest) = raw.strip_prefix("file://") else {
-        return PathBuf::from(raw);
-    };
-    let path = rest.trim_start_matches("localhost/");
-    let bytes = path.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[i + 1..i + 3])
-                .ok()
-                .and_then(|h| u8::from_str_radix(h, 16).ok());
-            if let Some(b) = hex {
-                out.push(b);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    PathBuf::from(String::from_utf8_lossy(&out).into_owned())
-}
 
 fn workspace_file(app: &AppHandle) -> Option<PathBuf> {
     app.path()
@@ -141,17 +112,18 @@ pub fn run() {
         .expect("error while running tauri application")
         .run(|_app, _event| {
             // macOS "Open with…": the file arrives as an Apple Event, surfaced
-            // as RunEvent::Opened (URL strings). Stash it for initial_open.
-            // The variant only exists on macOS/iOS/Android; on other platforms
-            // the callback does nothing.
+            // as RunEvent::Opened (file URLs). Stash it for initial_open;
+            // to_file_path handles the file:// URL decoding. The variant only
+            // exists on macOS/iOS/Android — other platforms do nothing.
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
             if let RunEvent::Opened { urls } = _event {
                 for url in urls {
-                    let path = file_url_to_path(&url);
-                    if let Some(state) = _app.try_state::<OpenedFile>() {
-                        if let Ok(mut slot) = state.0.lock() {
-                            *slot = Some(path);
-                            break;
+                    if let Ok(path) = url.to_file_path() {
+                        if let Some(state) = _app.try_state::<OpenedFile>() {
+                            if let Ok(mut slot) = state.0.lock() {
+                                *slot = Some(path);
+                                break;
+                            }
                         }
                     }
                 }
