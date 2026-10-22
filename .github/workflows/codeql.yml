@@ -7,23 +7,39 @@ on:
     branches: [main]
   schedule:
     - cron: '23 5 * * 1'
+  workflow_dispatch:
 
 jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
     permissions:
+      # security-events: write intentionally omitted: this is a private repo
+      # without GitHub Advanced Security, so the Code Scanning API rejects
+      # SARIF uploads with 403 ("code scanning is not enabled"). Results are
+      # archived as workflow artifacts instead.
       actions: read
       contents: read
-      security-events: write
     strategy:
       fail-fast: false
       matrix:
         language: ['javascript-typescript']
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/autobuild@v4
+      - uses: github/codeql-action/analyze@v4
+        with:
+          # Skip the Code Scanning API upload (unavailable on this repo) but
+          # keep the full analysis; the SARIF is archived below.
+          upload: never
+          output: ${{ runner.temp }}/results
+      - name: Archive CodeQL results (SARIF)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codeql-sarif
+          path: ${{ runner.temp }}/results
+          retention-days: 14
