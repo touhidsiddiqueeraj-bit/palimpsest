@@ -40,7 +40,12 @@ function nodeDb(dbPath: string): SqliteDb {
 }
 
 function nodeSnapshotFs(snapDir: string): SnapshotFs {
-  const archDir = join(snapDir, 'archive');
+  // Archive lives at .palimpsest/archive — a SIBLING of snapshots/, matching
+  // the desktop app and the layout documented in core's store. The old
+  // snapDir/archive placement left a directory inside snapshots/ that other
+  // hosts' list() reported as a live snapshot name and reindex() then failed
+  // to read (EISDIR) on mixed-desktop/MCP workspaces.
+  const archDir = join(dirname(snapDir), 'archive');
   return {
     async list() {
       const live = (await safeReaddir(snapDir)).map((name) => ({ name, archived: false }));
@@ -65,9 +70,13 @@ function nodeSnapshotFs(snapDir: string): SnapshotFs {
   };
 }
 
+/** File names only (never directories) — a stray dir inside snapshots/ must
+ *  not surface as a snapshot name. */
 const safeReaddir = async (dir: string): Promise<string[]> => {
   try {
-    return await readdir(dir);
+    return (await readdir(dir, { withFileTypes: true }))
+      .filter((e) => e.isFile())
+      .map((e) => e.name);
   } catch {
     return [];
   }
@@ -143,7 +152,7 @@ export async function main(argv: string[]): Promise<void> {
   }
   const ws = resolve(args.get('workspace') ?? process.cwd());
   const metaDir = join(ws, '.palimpsest');
-  await mkdir(join(metaDir, 'snapshots', 'archive'), { recursive: true });
+  await mkdir(join(metaDir, 'snapshots'), { recursive: true });
 
   const store = createHistoryStore(
     nodeDb(join(metaDir, 'index.db')),

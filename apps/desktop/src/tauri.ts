@@ -34,7 +34,12 @@ export function snapshotFs(root: string): SnapshotFs {
         [archive, true],
       ] as const) {
         try {
-          for (const e of await readDir(dir)) out.push({ name: e.name, archived });
+          // Files only: a stray directory inside snapshots/ (e.g. left by an
+          // older MCP CLI that archived there) used to surface as a live
+          // snapshot name and made reindex() fail with EISDIR.
+          for (const e of await readDir(dir)) {
+            if (!e.isDirectory) out.push({ name: e.name, archived });
+          }
         } catch {
           // dir not created yet
         }

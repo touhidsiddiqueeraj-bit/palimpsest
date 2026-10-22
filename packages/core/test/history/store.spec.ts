@@ -36,6 +36,46 @@ describe('file-backed history store', () => {
     await expect(store.resolveDoc('nope.md')).rejects.toThrow('not found');
   });
 
+  it('survives a concurrent-create race: the loser adopts the winner row', async () => {
+    // Two connections to the same file (dev-mode double boot, two MCP clients
+    // on one workspace): both SELECT (miss), both INSERT — the loser used to
+    // surface a UNIQUE constraint error to the user instead of a document.
+    const { DatabaseSync } = await import('node:sqlite');
+    const dbPath = join(root, '.palimpsest', 'index.db');
+    await (await import('node:fs/promises')).mkdir(join(root, '.palimpsest'), { recursive: true });
+    const mk = () => {
+      const raw = new DatabaseSync(dbPath);
+      raw.exec('PRAGMA busy_timeout = 5000;');
+      const db: import('../../src/history/types.js').SqliteDb = {
+        async select(sql: string, params: unknown[] = []) {
+          return raw.prepare(sql).all(...(params as never[])) as Record<string, unknown>[];
+        },
+        async execute(sql: string, params: unknown[] = []) {
+          const info = raw.prepare(sql).run(...(params as never[]));
+          return { lastInsertId: Number(info.lastInsertRowid), changes: Number(info.changes) };
+        },
+      };
+      return { db, close: () => raw.close() };
+    };
+    const a = mk();
+    const b = mk();
+    const storeA = createHistoryStore(a.db, fs);
+    const storeB = createHistoryStore(b.db, fs);
+    await storeA.init();
+    await storeB.init();
+    const [docA, docB] = await Promise.all([
+      storeA.getOrCreateDoc('raced.md'),
+      storeB.getOrCreateDoc('raced.md'),
+    ]);
+    expect(docA.id).toBe(docB.id);
+    expect(docA.name).toBe('raced.md');
+    // The store keeps working after the race
+    const snap = await storeA.capture(docA.id, 'racy text', 'milestone', 'after race');
+    expect((await storeA.get(docA.id, snap.id)).text).toBe('racy text');
+    a.close();
+    b.close();
+  });
+
   it('writes snapshots as human-readable .md files with YAML frontmatter', async () => {
     const doc = await store.getOrCreateDoc('notes.md');
     await store.capture(doc.id, 'Hello world.', 'milestone', 'First draft', { model: 'ollama' });

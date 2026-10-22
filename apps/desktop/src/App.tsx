@@ -91,6 +91,13 @@ export default function App() {
   const [activeDoc, setActiveDoc] = useState<string>('notes.md');
   const [newDocName, setNewDocName] = useState('');
   const wsRef = useRef<string | null>(null);
+  /** Boot-once guard — see the comment on the mount effect. */
+  const bootedRef = useRef(false);
+  /** What we believe the active doc's file contains: last text the app read or
+   * wrote. Divergence between this and the actual disk content = external edit. */
+  const diskTextRef = useRef('');
+  /** Serializes persistLive's read-check-write sequence (see persistLive). */
+  const persistChain = useRef(Promise.resolve());
   const docNamesRef = useRef(new Map<number, string>());
   const editorApiRef = useRef<EditorApi | null>(null);
   const newDocInputRef = useRef<HTMLInputElement | null>(null);
@@ -239,12 +246,20 @@ export default function App() {
     } catch {
       /* freshly created doc */
     }
+    diskTextRef.current = t;
     const doc = await s.getOrCreateDoc(name, name);
     docNamesRef.current.set(doc.id, name);
-    const list = await s.list(doc.id);
+    let list = await s.list(doc.id);
     if (list.length === 0 && mds.length === 0) {
       await s.capture(doc.id, t, 'milestone', 'Chapter one');
       await s.capture(doc.id, t, 'auto', 'seed');
+    } else {
+      // Existing files must land in history on boot, not wait for the first
+      // 120-char edit: openDoc() reconciles, openWorkspace() used to skip it,
+      // so the boot document of a non-empty workspace stayed unversioned (and
+      // a file changed after a crash was never captured).
+      await s.reconcile(doc.id, t);
+      list = await s.list(doc.id);
     }
     setDocId(doc.id);
     setActiveDoc(name);
@@ -256,6 +271,12 @@ export default function App() {
   };
 
   useEffect(() => {
+    // StrictMode double-mounts this effect in dev (`pnpm tauri dev`), and two
+    // concurrent openWorkspace() boots race getOrCreateDoc() into a UNIQUE
+    // constraint failure that leaves the app on the "Backend unavailable"
+    // screen. A ref guard makes the boot run exactly once per app instance.
+    if (bootedRef.current) return;
+    bootedRef.current = true;
     let cancelled = false;
     (async () => {
       try {
@@ -290,7 +311,25 @@ export default function App() {
   const persistLive = (id: number, v: string) => {
     const name = docNamesRef.current.get(id);
     if (!name || !wsRef.current) return;
-    writeTextFile(`${wsRef.current}/${name}`, v).catch(() => {});
+    // Serialize: the debounce, the 5s interval, Ctrl+S and milestone/restore
+    // flows can overlap; concurrent read-check-write pairs would race each
+    // other and could double-capture the same external change.
+    persistChain.current = persistChain.current.then(async () => {
+      // External-change guard: if the file on disk diverged from what we last
+      // wrote/saw, this write would silently destroy that content — snapshot
+      // it into history first so it stays recoverable (README: external edits
+      // are captured, never lost).
+      try {
+        const disk = await readTextFile(`${wsRef.current}/${name}`);
+        if (disk !== diskTextRef.current && disk !== v && storeRef.current) {
+          await storeRef.current.capture(id, disk, 'system', 'External edit (pre-overwrite)');
+        }
+      } catch {
+        /* file missing: nothing external to preserve */
+      }
+      diskTextRef.current = v;
+      writeTextFile(`${wsRef.current}/${name}`, v).catch(() => {});
+    });
   };
 
   const clearDiff = () => {
@@ -312,12 +351,20 @@ export default function App() {
   const openDoc = async (name: string) => {
     const s = storeRef.current;
     if (!s || !wsRef.current) return;
-    let t = INITIAL;
+    let t: string | null = null;
     try {
       t = await readTextFile(`${wsRef.current}/${name}`);
     } catch {
-      /* freshly created doc */
+      /* deleted externally */
     }
+    if (t === null) {
+      // The file is gone (deleted by git, an agent, another tool). Falling
+      // back to INITIAL used to resurrect the file with unrelated content on
+      // the next persist; instead just refresh the sidebar and stay put.
+      await loadDocs();
+      return;
+    }
+    diskTextRef.current = t;
     const doc = await s.getOrCreateDoc(name, name);
     docNamesRef.current.set(doc.id, name);
     await s.reconcile(doc.id, t);
@@ -685,6 +732,27 @@ export default function App() {
       const curText = textRef.current;
       const curDocId = docIdRef.current;
       if (curDocId === null) return;
+      // External-edit pickup while idle: if the file on disk changed and the
+      // editor has no local buffer beyond what we last persisted, pull the
+      // external content into the editor and snapshot it — instead of leaving
+      // the app blind until the next doc switch. A dirty editor is never
+      // clobbered; its next persistLive snapshots the external text first.
+      const name = docNamesRef.current.get(curDocId);
+      if (name && wsRef.current && curText === diskTextRef.current && store) {
+        try {
+          const disk = await readTextFile(`${wsRef.current}/${name}`);
+          if (disk !== diskTextRef.current) {
+            diskTextRef.current = disk;
+            await store.capture(curDocId, disk, 'auto', 'external change');
+            lastLen.current = disk.length;
+            lastSnapTs.current = Date.now();
+            setText(disk);
+            await refreshSnaps(curDocId);
+          }
+        } catch {
+          /* deleted externally: loadDocs above drops it from the sidebar */
+        }
+      }
       const churn = Math.abs(curText.length - lastLen.current);
       if (snapshotDue(Date.now(), lastSnapTs.current, churn)) {
         await store.capture(curDocId, curText, 'auto', 'auto');
@@ -893,13 +961,22 @@ export default function App() {
   };
 
   const onExport = async () => {
-    const html = renderMarkdown(text).html;
+    const body = renderMarkdown(text).html;
+    // A bare fragment used to be written: no <html>, no charset, no styles —
+    // browsers rendered unstyled text and non-ASCII mojibake. Ship a complete,
+    // standalone document instead.
+    const title = activeDoc.replace(/\.md$/i, '') || 'document';
+    const doc =
+      '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+      `<title>${title.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c] ?? c)}</title>` +
+      '<style>body{font-family:Georgia,serif;max-width:42rem;margin:2.5rem auto;line-height:1.7;color:#1a1a1a;padding:0 1rem}h1,h2,h3{line-height:1.25}code{font-family:ui-monospace,monospace;font-size:.9em}pre{background:#f4f4f4;padding:1rem;overflow:auto}blockquote{border-left:3px solid #ccc;margin-left:0;padding-left:1rem;color:#555}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.3rem .6rem}img{max-width:100%}</style>' +
+      `</head><body>${body}</body></html>`;
     const path = await save({
-      defaultPath: 'notes.html',
+      defaultPath: `${title}.html`,
       filters: [{ name: 'HTML', extensions: ['html'] }],
     });
     if (!path) return;
-    await writeTextFile(path, html);
+    await writeTextFile(path, doc);
   };
 
   const onImport = async () => {
@@ -934,6 +1011,10 @@ export default function App() {
     const k = e.key.toLowerCase();
     if (mod && k === 'p') {
       e.preventDefault();
+      // A reopen kept the previous query ("theme" + typing "milestone" →
+      // "thememilestone" → zero matches, Enter did nothing). Fresh query per
+      // open; clearing on close too is harmless while hidden.
+      setPaletteQuery('');
       setPaletteOpen((v) => !v);
       return;
     }
@@ -1617,13 +1698,20 @@ export default function App() {
                 className={viewMode === 'split' ? 'min-w-0' : 'flex-1 min-w-0'}
                 style={viewMode === 'split' ? { width: `${splitPct}%` } : undefined}
               >
-                <CodeEditor
-                  key={`${activeDoc}:${theme}`}
-                  value={text}
-                  onChange={onEdit}
-                  apiRef={editorApiRef}
-                  typewriter={typewriter}
-                />
+                {/* Mount only once a document is loaded: the editor used to
+                 * mount with the empty pre-boot text state, so the value-sync
+                 * dispatch right after openWorkspace counted as a user edit —
+                 * a spurious persistLive "echo" that could clobber an external
+                 * edit landing in the first seconds after boot. */}
+                {docId !== null && (
+                  <CodeEditor
+                    key={`${activeDoc}:${theme}`}
+                    value={text}
+                    onChange={onEdit}
+                    apiRef={editorApiRef}
+                    typewriter={typewriter}
+                  />
+                )}
               </div>
             )}
             {viewMode === 'split' && (

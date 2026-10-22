@@ -108,24 +108,35 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
 
   async function getOrCreateDoc(name: string, path?: string): Promise<DocumentInfo> {
     const now = Date.now();
-    const rows = await db.select<DocumentInfo>(
-      'SELECT id, name, path, created, updated FROM documents WHERE name = ?',
-      [name],
-    );
-    if (rows[0]) {
-      const doc = rows[0];
-      await db.execute('UPDATE documents SET updated = ?, path = COALESCE(?, path) WHERE id = ?', [
+    const byName = () =>
+      db.select<DocumentInfo>(
+        'SELECT id, name, path, created, updated FROM documents WHERE name = ?',
+        [name],
+      );
+    const adopt = (doc: DocumentInfo): DocumentInfo => {
+      void db.execute('UPDATE documents SET updated = ?, path = COALESCE(?, path) WHERE id = ?', [
         now,
         path ?? null,
         doc.id,
       ]);
       return { ...doc, path: path ?? doc.path, updated: now };
+    };
+    const existing = (await byName())[0];
+    if (existing) return adopt(existing);
+    try {
+      const r = await db.execute(
+        'INSERT INTO documents (name, path, text, created, updated) VALUES (?, ?, ?, ?, ?)',
+        [name, path ?? null, '', now, now],
+      );
+      return { id: Number(r.lastInsertId), name, path: path ?? null, created: now, updated: now };
+    } catch (e) {
+      // Lost a concurrent-create race (dev-mode double boot, two MCP clients
+      // on one workspace): the other writer's row IS this document — adopt it
+      // instead of surfacing a UNIQUE constraint error to the user.
+      const raced = (await byName())[0];
+      if (raced) return adopt(raced);
+      throw e;
     }
-    const r = await db.execute(
-      'INSERT INTO documents (name, path, text, created, updated) VALUES (?, ?, ?, ?, ?)',
-      [name, path ?? null, '', now, now],
-    );
-    return { id: Number(r.lastInsertId), name, path: path ?? null, created: now, updated: now };
   }
 
   /** Write an immutable snapshot file, then index it. */
