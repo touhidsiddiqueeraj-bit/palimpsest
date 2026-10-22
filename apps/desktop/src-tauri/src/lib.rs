@@ -1,8 +1,4 @@
-use std::{
-    fs,
-    path::PathBuf,
-    sync::mpsc,
-};
+use std::{fs, path::PathBuf, sync::mpsc};
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
@@ -20,7 +16,8 @@ fn workspace_file(app: &AppHandle) -> Option<PathBuf> {
  * (`require_literal_leading_dot` on unix). */
 fn scope_workspace(app: &AppHandle, dir: &std::path::Path) -> tauri::Result<()> {
     app.fs_scope().allow_directory(dir, true)?;
-    app.fs_scope().allow_directory(dir.join(".palimpsest"), true)?;
+    app.fs_scope()
+        .allow_directory(dir.join(".palimpsest"), true)?;
     Ok(())
 }
 
@@ -49,11 +46,9 @@ fn get_workspace(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 async fn pick_workspace(app: AppHandle) -> Result<Option<String>, String> {
     let (tx, rx) = mpsc::channel();
-    app.dialog()
-        .file()
-        .pick_folder(move |dir| {
-            let _ = tx.send(dir);
-        });
+    app.dialog().file().pick_folder(move |dir| {
+        let _ = tx.send(dir);
+    });
     let Some(dir) = rx.recv().map_err(|e| e.to_string())? else {
         return Ok(None);
     };
@@ -87,7 +82,11 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![get_workspace, pick_workspace, initial_open])
+        .invoke_handler(tauri::generate_handler![
+            get_workspace,
+            pick_workspace,
+            initial_open
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

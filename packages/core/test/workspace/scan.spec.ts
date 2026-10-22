@@ -3,18 +3,24 @@ import { listMarkdownDocs, type DirEntry } from '../../src/workspace/scan.js';
 
 const ROOT = 'ws';
 const tree = new Map<string, DirEntry[]>([
-  [ROOT, [
-    { name: 'notes.md', isDir: false },
-    { name: '.hidden.md', isDir: false },
-    { name: 'a', isDir: true },
-    { name: '.palimpsest', isDir: true },
-    { name: 'empty', isDir: true },
-    { name: 'node_modules', isDir: true },
-  ]],
-  [`${ROOT}/a`, [
-    { name: 'b.md', isDir: false },
-    { name: 'c', isDir: true },
-  ]],
+  [
+    ROOT,
+    [
+      { name: 'notes.md', isDir: false },
+      { name: '.hidden.md', isDir: false },
+      { name: 'a', isDir: true },
+      { name: '.palimpsest', isDir: true },
+      { name: 'empty', isDir: true },
+      { name: 'node_modules', isDir: true },
+    ],
+  ],
+  [
+    `${ROOT}/a`,
+    [
+      { name: 'b.md', isDir: false },
+      { name: 'c', isDir: true },
+    ],
+  ],
   [`${ROOT}/a/c`, [{ name: 'd.md', isDir: false }]],
   [`${ROOT}/.palimpsest`, [{ name: 'snapshots', isDir: true }]],
   [`${ROOT}/.palimpsest/snapshots`, [{ name: '1-auto.md', isDir: false }]],

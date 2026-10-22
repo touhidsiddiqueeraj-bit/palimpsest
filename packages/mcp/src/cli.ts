@@ -15,7 +15,13 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
-import { createHistoryStore, listMarkdownDocs, type Readdir, type SqliteDb, type SnapshotFs } from '@palimpsest/core';
+import {
+  createHistoryStore,
+  listMarkdownDocs,
+  type Readdir,
+  type SqliteDb,
+  type SnapshotFs,
+} from '@palimpsest/core';
 import { createClient, isLocalUrl, type AiClient } from '@palimpsest/ai';
 import { runStdioServer, runHttpServer, type McpContext } from './index.js';
 
@@ -44,8 +50,9 @@ function nodeSnapshotFs(snapDir: string): SnapshotFs {
     async read(name: string, archived: boolean) {
       return readFile(join(archived ? archDir : snapDir, name), 'utf8');
     },
-    async write(name: string, text: string) {
-      const target = join(snapDir, name);
+    async write(name: string, text: string, archived = false) {
+      const dir = archived ? archDir : snapDir;
+      const target = join(dir, name);
       const tmp = target + '.tmp';
       await mkdir(dirname(target), { recursive: true });
       await writeFile(tmp, text);

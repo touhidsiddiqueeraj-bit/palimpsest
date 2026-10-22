@@ -346,7 +346,10 @@ function renderMarkdownImpl(src: string, options: RenderOptions): RenderResult {
       const cm = inner.match(/^\[!([a-z]+)\](?:\s+|$)/i);
       if (cm && CALLOT_KINDS.has(cm[1]!.toLowerCase())) {
         kind = cm[1]!.toLowerCase();
-        inner = inner.replace(/^\[![a-z]+\][ \t]*(?:\n|$)/i, '');
+        // Strip the marker plus following whitespace (newline or the space
+        // before a same-line title). The old pattern required end-of-line after
+        // the marker, so `> [!note] Title` kept the raw "[!note]" in the body.
+        inner = inner.replace(/^\[![a-z]+\]\s*/i, '');
       }
       const sub = renderMarkdownImpl(inner, options);
       if (kind) {

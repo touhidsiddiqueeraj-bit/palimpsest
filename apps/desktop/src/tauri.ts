@@ -44,9 +44,10 @@ export function snapshotFs(root: string): SnapshotFs {
     async read(name, archived) {
       return readTextFile(`${archived ? archive : live}/${name}`);
     },
-    async write(name, text) {
-      await mkdir(live, { recursive: true });
-      await writeTextFile(`${live}/${name}`, text);
+    async write(name, text, archived = false) {
+      const dir = archived ? archive : live;
+      await mkdir(dir, { recursive: true });
+      await writeTextFile(`${dir}/${name}`, text);
     },
     async moveToArchive(name) {
       await mkdir(archive, { recursive: true });

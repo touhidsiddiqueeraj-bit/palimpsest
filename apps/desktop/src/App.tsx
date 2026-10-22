@@ -142,20 +142,45 @@ export default function App() {
   const [usage, setUsage] = useState(0);
   const [tab, setTab] = useState<'edit' | 'chat' | 'links'>('edit');
   const [aiCfg, setAiCfg] = useState<{ baseUrl: string; model: string }>(() => {
+    // Guard against partially-written or legacy stored config: a valid-JSON
+    // object missing baseUrl/model used to leave the AI panel with undefined
+    // fields and an unusable provider.
+    const fallback = {
+      baseUrl: DEFAULT_PROVIDERS[0]!.baseUrl,
+      model: DEFAULT_PROVIDERS[0]!.model,
+    };
     try {
-      return JSON.parse(localStorage.getItem('palimpsest.ai') ?? '') as {
-        baseUrl: string;
-        model: string;
+      const parsed = JSON.parse(localStorage.getItem('palimpsest.ai') ?? '') as {
+        baseUrl?: string;
+        model?: string;
       };
+      if (typeof parsed?.baseUrl === 'string' && typeof parsed?.model === 'string') {
+        return { baseUrl: parsed.baseUrl, model: parsed.model };
+      }
     } catch {
-      return { baseUrl: DEFAULT_PROVIDERS[0]!.baseUrl, model: DEFAULT_PROVIDERS[0]!.model };
+      /* fall through to defaults */
     }
+    return fallback;
   });
   const [aiKey, setAiKey] = useState('');
   const [showAiCfg, setShowAiCfg] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
   const snapshotTimer = useRef<number | null>(null);
   const lastLen = useRef(INITIAL.length);
+  /** Timestamp of the last snapshot — snapshotDue()'s idle gate is measured
+   * from here, not from a fixed module-load constant (which made the gate
+   * always pass and auto-snapshots fire on every debounce). */
+  const lastSnapTs = useRef(INITIAL_TS);
+  /** Latest editor text + doc id for timers/intervals that must not be reset
+   * on every keystroke. */
+  const textRef = useRef('');
+  const docIdRef = useRef<number | null>(null);
+  textRef.current = text;
+  docIdRef.current = docId;
+  /** Monotonic ids so stale debounced search responses can't clobber newer ones. */
+  const searchSeq = useRef(0);
+  const fileSearchSeq = useRef(0);
+  const [dragging, setDragging] = useState(false);
 
   const net = useNetActivity();
   const localOnly = useLocalOnly();
@@ -164,6 +189,8 @@ export default function App() {
 
   const openWorkspace = async (workspace: string) => {
     wsRef.current = workspace;
+    docNamesRef.current.clear(); // ids are per-workspace; stale mappings would
+    // misroute persistLive after a workspace switch
     const fs = snapshotFs(workspace);
     await mkdir(workspace, { recursive: true });
     await mkdir(`${workspace}/.palimpsest`, { recursive: true });
@@ -197,6 +224,7 @@ export default function App() {
     setActiveDoc(name);
     setText(t);
     lastLen.current = t.length;
+    lastSnapTs.current = list[0]?.ts ?? Date.now();
     await loadDocs();
     await refreshSnaps(doc.id);
   };
@@ -268,6 +296,12 @@ export default function App() {
     docNamesRef.current.set(doc.id, name);
     await s.reconcile(doc.id, t);
     lastLen.current = t.length;
+    // A pending debounce from the previous doc must not fire after the switch:
+    // it would re-capture the old text under a stale closure.
+    if (snapshotTimer.current) {
+      window.clearTimeout(snapshotTimer.current);
+      snapshotTimer.current = null;
+    }
     setActiveDoc(name);
     setSelected(null);
     setPreview(null);
@@ -275,6 +309,10 @@ export default function App() {
     setDocId(doc.id);
     setText(t);
     await refreshSnaps(doc.id);
+    // Measure the idle gate from the latest snapshot (or now, for a doc with
+    // no history yet) instead of leaving a stale timestamp from the old doc.
+    const list = await s.list(doc.id);
+    lastSnapTs.current = list[0]?.ts ?? Date.now();
   };
 
   const createDoc = async () => {
@@ -319,6 +357,7 @@ export default function App() {
     await store.capture(docId, text, 'milestone', label);
     persistLive(docId, text);
     lastLen.current = text.length;
+    lastSnapTs.current = Date.now();
     await refreshSnaps(docId);
   };
 
@@ -355,15 +394,17 @@ export default function App() {
   const onSearch = (q: string) => {
     setSearchQuery(q);
     if (searchTimer.current) window.clearTimeout(searchTimer.current);
+    const seq = ++searchSeq.current;
     searchTimer.current = window.setTimeout(async () => {
       if (!q.trim() || !store) {
         setSearchResults([]);
         return;
       }
       try {
-        setSearchResults(await store.search(q, 30, true));
+        const hits = await store.search(q, 30, true);
+        if (searchSeq.current === seq) setSearchResults(hits);
       } catch {
-        setSearchResults([]);
+        if (searchSeq.current === seq) setSearchResults([]);
       }
     }, 250);
   };
@@ -389,17 +430,20 @@ export default function App() {
   const onFileSearch = (q: string) => {
     setFileQuery(q);
     if (fileSearchTimer.current) window.clearTimeout(fileSearchTimer.current);
+    const seq = ++fileSearchSeq.current;
     fileSearchTimer.current = window.setTimeout(async () => {
-      if (!q.trim() || !store || !docId) {
+      const name = docId !== null ? docNamesRef.current.get(docId) : undefined;
+      if (!q.trim() || !store || !name) {
         setFileResults([]);
         return;
       }
       try {
-        const hits = await store.search(q, 30, true);
-        const name = docNamesRef.current.get(docId);
-        setFileResults(hits.filter((h) => h.docName === name));
+        // SQL-level doc scoping: a plain workspace-wide search could fill its
+        // LIMIT with other docs' hits and miss matches in the current file.
+        const hits = await store.search(q, 30, true, { doc: name });
+        if (fileSearchSeq.current === seq) setFileResults(hits);
       } catch {
-        setFileResults([]);
+        if (fileSearchSeq.current === seq) setFileResults([]);
       }
     }, 250);
   };
@@ -410,9 +454,7 @@ export default function App() {
       return;
     }
     const label = (id: number | 'current') =>
-      id === 'current'
-        ? 'current'
-        : (filtered.find((s) => s.id === id)?.label ?? `#${id}`);
+      id === 'current' ? 'current' : (filtered.find((s) => s.id === id)?.label ?? `#${id}`);
     const r = await store.diff(docId, diffA, diffB, text);
     setDiff({
       fromLabel: label(diffA),
@@ -440,6 +482,9 @@ export default function App() {
       const r = await store.restore(docId, diffB as number, text, `Diff restore → ${diff.toLabel}`);
       setText(r.text);
       persistLive(docId, r.text);
+      lastLen.current = r.text.length;
+      lastSnapTs.current = Date.now();
+      setSavedAt(Date.now());
       setDiff(null);
       setPreview(null);
       await refreshSnaps(docId);
@@ -450,16 +495,18 @@ export default function App() {
 
   const loadLinks = async () => {
     if (!wsRef.current) return;
+    // Read all docs concurrently — the sequential loop made the backlinks
+    // panel wait on every file in the workspace one after another.
+    const texts = await Promise.all(
+      docs.map((d) => readTextFile(`${wsRef.current}/${d}`).catch(() => null)),
+    );
     const found: Array<{ from: string; to: string }> = [];
-    for (const d of docs) {
-      try {
-        const txt = await readTextFile(`${wsRef.current}/${d}`);
-        for (const m of txt.matchAll(/\[\[([^\]|#!]+)/g))
-          found.push({ from: d, to: (m[1] ?? '').trim() });
-      } catch {
-        /* skip */
-      }
-    }
+    docs.forEach((d, i) => {
+      const txt = texts[i];
+      if (!txt) return;
+      for (const m of txt.matchAll(/\[\[([^\]|#!]+)/g))
+        found.push({ from: d, to: (m[1] ?? '').trim() });
+    });
     setLinks(found);
   };
 
@@ -526,7 +573,12 @@ export default function App() {
   const toolbar: Array<{ Icon: LucideIcon; title: string; group: number; run: () => void }> = [
     { Icon: Bold, title: 'Bold', group: 0, run: () => editorApiRef.current?.wrap('**') },
     { Icon: Italic, title: 'Italic', group: 0, run: () => editorApiRef.current?.wrap('*') },
-    { Icon: Strikethrough, title: 'Strikethrough', group: 0, run: () => editorApiRef.current?.wrap('~~') },
+    {
+      Icon: Strikethrough,
+      title: 'Strikethrough',
+      group: 0,
+      run: () => editorApiRef.current?.wrap('~~'),
+    },
     { Icon: Code2, title: 'Inline code', group: 0, run: () => editorApiRef.current?.wrap('`') },
     {
       Icon: Link2,
@@ -535,20 +587,50 @@ export default function App() {
       run: () => editorApiRef.current?.wrap('[', '](https://)', (sel) => sel),
     },
     { Icon: Heading1, title: 'Heading 1', group: 1, run: () => editorApiRef.current?.insert('# ') },
-    { Icon: Heading2, title: 'Heading 2', group: 1, run: () => editorApiRef.current?.insert('## ') },
-    { Icon: Heading3, title: 'Heading 3', group: 1, run: () => editorApiRef.current?.insert('### ') },
+    {
+      Icon: Heading2,
+      title: 'Heading 2',
+      group: 1,
+      run: () => editorApiRef.current?.insert('## '),
+    },
+    {
+      Icon: Heading3,
+      title: 'Heading 3',
+      group: 1,
+      run: () => editorApiRef.current?.insert('### '),
+    },
     { Icon: Quote, title: 'Quote', group: 1, run: () => editorApiRef.current?.insert('> ') },
     { Icon: List, title: 'Bullet list', group: 1, run: () => editorApiRef.current?.insert('- ') },
-    { Icon: ListOrdered, title: 'Numbered list', group: 1, run: () => editorApiRef.current?.insert('1. ') },
-    { Icon: ListTodo, title: 'Task list', group: 1, run: () => editorApiRef.current?.insert('- [ ] ') },
+    {
+      Icon: ListOrdered,
+      title: 'Numbered list',
+      group: 1,
+      run: () => editorApiRef.current?.insert('1. '),
+    },
+    {
+      Icon: ListTodo,
+      title: 'Task list',
+      group: 1,
+      run: () => editorApiRef.current?.insert('- [ ] '),
+    },
     {
       Icon: Table2,
       title: 'Table',
       group: 2,
       run: () => editorApiRef.current?.insert('| col | col |\n| --- | --- |\n|  |  |'),
     },
-    { Icon: Minus, title: 'Horizontal rule', group: 2, run: () => editorApiRef.current?.insert('---') },
-    { Icon: StickyNote, title: 'Callout', group: 2, run: () => editorApiRef.current?.insert('> [!note]') },
+    {
+      Icon: Minus,
+      title: 'Horizontal rule',
+      group: 2,
+      run: () => editorApiRef.current?.insert('---'),
+    },
+    {
+      Icon: StickyNote,
+      title: 'Callout',
+      group: 2,
+      run: () => editorApiRef.current?.insert('> [!note]'),
+    },
   ];
 
   const refreshSnaps = async (id: number) => {
@@ -565,18 +647,27 @@ export default function App() {
 
   useEffect(() => {
     if (!store || docId === null) return;
+    // Refs, not state deps: depending on `text` tore the interval down and
+    // recreated it on every keystroke, so during continuous typing it never
+    // fired — auto-snapshots and external-change polling only ever ran after
+    // a pause. Reading textRef/docIdRef keeps one stable interval per doc.
     const t = window.setInterval(async () => {
       void loadDocs();
-      const churn = Math.abs(text.length - lastLen.current);
-      if (snapshotDue(Date.now(), INITIAL_TS, churn)) {
-        await store.capture(docId, text, 'auto', 'auto');
-        persistLive(docId, text);
-        lastLen.current = text.length;
-        await refreshSnaps(docId);
+      const curText = textRef.current;
+      const curDocId = docIdRef.current;
+      if (curDocId === null) return;
+      const churn = Math.abs(curText.length - lastLen.current);
+      if (snapshotDue(Date.now(), lastSnapTs.current, churn)) {
+        await store.capture(curDocId, curText, 'auto', 'auto');
+        persistLive(curDocId, curText);
+        lastLen.current = curText.length;
+        lastSnapTs.current = Date.now();
+        await refreshSnaps(curDocId);
       }
     }, 5000);
     return () => window.clearInterval(t);
-  }, [store, docId, text]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, docId]);
 
   const provider: Provider = {
     id: aiCfg.baseUrl,
@@ -635,6 +726,9 @@ export default function App() {
       });
       setText(proposal.proposed);
       persistLive(docId, proposal.proposed);
+      lastLen.current = proposal.proposed.length;
+      lastSnapTs.current = Date.now();
+      setSavedAt(Date.now());
       setProposal(null);
       setPrompt('');
       await refreshSnaps(docId);
@@ -651,7 +745,10 @@ export default function App() {
     setChat((c) => [...c, { role: 'user', content: q }]);
     try {
       const client = createClient(provider, { localOnly: localOnlyRef.current });
-      const bundle = await store.recall(q, 4096, { scope: [String(docId)] });
+      // RecallOptions.document/scope match on the doc NAME. The old call passed
+      // String(docId), which never matched anything — chat always ran with an
+      // empty memory bundle.
+      const bundle = await store.recall(q, 4096, { document: activeDoc });
       const budgeted = bundle.results
         .map(
           (h) =>
@@ -682,12 +779,16 @@ export default function App() {
     if (snapshotTimer.current) window.clearTimeout(snapshotTimer.current);
     snapshotTimer.current = window.setTimeout(async () => {
       const churn = Math.abs(v.length - lastLen.current);
-      if (store && docId !== null && snapshotDue(Date.now(), INITIAL_TS, churn)) {
+      if (store && docId !== null && snapshotDue(Date.now(), lastSnapTs.current, churn)) {
         await store.capture(docId, v, 'auto', 'auto');
         lastLen.current = v.length;
+        lastSnapTs.current = Date.now();
         await refreshSnaps(docId);
       }
-      persistLive(docId ?? -1, v);
+      if (docId !== null) {
+        persistLive(docId, v);
+        setSavedAt(Date.now());
+      }
     }, 2500);
   };
 
@@ -698,6 +799,9 @@ export default function App() {
       const r = await store.restore(docId, id, text, 'Manual restore');
       setText(r.text);
       persistLive(docId, r.text);
+      lastLen.current = r.text.length;
+      lastSnapTs.current = Date.now();
+      setSavedAt(Date.now());
       setPreview(null);
       await refreshSnaps(docId);
     } finally {
@@ -769,56 +873,76 @@ export default function App() {
     if (!path) return;
     const raw = await readTextFile(path);
     const isHtml = /\.html?$/i.test(path);
-    setText(isHtml ? htmlToMarkdown(raw) : raw);
+    const imported = isHtml ? htmlToMarkdown(raw) : raw;
+    if (imported === text) return;
+    // An import replaces the live document, so treat it like a restore:
+    // preserve the pre-import state, then persist and record the new text.
+    // The old code only called setText — the file on disk kept the old content
+    // until the next keystroke, and lastLen went stale.
+    if (store && docId !== null) {
+      await store.capture(docId, text, 'system', 'Before import');
+      await store.capture(docId, imported, 'auto', `Import · ${await basename(path)}`);
+      lastLen.current = imported.length;
+      lastSnapTs.current = Date.now();
+      persistLive(docId, imported);
+      setSavedAt(Date.now());
+      await refreshSnaps(docId);
+    }
+    setText(imported);
   };
 
+  // One window-level keydown listener for the app's lifetime: re-registering it
+  // on every render (the old dependency-less effect) churned the DOM on each
+  // keystroke. The handler lives in a ref so it still sees fresh state.
+  const onKeyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  onKeyRef.current = (e: KeyboardEvent) => {
+    const mod = e.metaKey || e.ctrlKey;
+    const k = e.key.toLowerCase();
+    if (mod && k === 'p') {
+      e.preventDefault();
+      setPaletteOpen((v) => !v);
+      return;
+    }
+    if (mod && k === 'o') {
+      e.preventDefault();
+      void openFile();
+      return;
+    }
+    if (e.key === 'Escape' && diff) {
+      clearDiff();
+      return;
+    }
+    if (mod && e.shiftKey && k === 'm') {
+      e.preventDefault();
+      void createMilestone();
+      return;
+    }
+    if (mod && k === 's') {
+      e.preventDefault();
+      if (docId !== null) {
+        persistLive(docId, text);
+        setSavedAt(Date.now());
+      }
+      return;
+    }
+    if (e.altKey && k === 'l') {
+      e.preventDefault();
+      void onExport();
+    }
+    if (e.ctrlKey && e.shiftKey && k === 'i') {
+      e.preventDefault();
+      void onImport();
+    }
+    if (e.ctrlKey && e.shiftKey && k === 'f') {
+      e.preventDefault();
+      fileSearchRef.current?.focus();
+    }
+  };
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      const k = e.key.toLowerCase();
-      if (mod && k === 'p') {
-        e.preventDefault();
-        setPaletteOpen((v) => !v);
-        return;
-      }
-      if (mod && k === 'o') {
-        e.preventDefault();
-        void openFile();
-        return;
-      }
-      if (e.key === 'Escape' && diff) {
-        clearDiff();
-        return;
-      }
-      if (mod && e.shiftKey && k === 'm') {
-        e.preventDefault();
-        void createMilestone();
-        return;
-      }
-      if (mod && k === 's') {
-        e.preventDefault();
-        if (docId !== null) {
-          persistLive(docId, text);
-          setSavedAt(Date.now());
-        }
-        return;
-      }
-      if (e.altKey && k === 'l') {
-        e.preventDefault();
-        void onExport();
-      }
-      if (e.ctrlKey && e.shiftKey && k === 'i') {
-        e.preventDefault();
-        void onImport();
-      }
-      if (e.ctrlKey && e.shiftKey && k === 'f') {
-        e.preventDefault();
-        fileSearchRef.current?.focus();
-      }
-    };
+    const onKey = (e: KeyboardEvent) => onKeyRef.current(e);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  });
+  }, []);
 
   const diffWords = useMemo(() => {
     const r = diffProse(preview ?? INITIAL, text);
@@ -842,9 +966,7 @@ export default function App() {
     );
   };
 
-  const statusChip = (
-    status: string | undefined,
-  ): { cls: string; label: string } | null =>
+  const statusChip = (status: string | undefined): { cls: string; label: string } | null =>
     status === 'modified'
       ? { cls: 'chip-mod', label: 'changed' }
       : status === 'deleted'
@@ -997,122 +1119,122 @@ export default function App() {
           </aside>
         ) : (
           <aside className="w-44 shrink-0 overflow-y-auto p-3 text-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="font-semibold">Docs</h2>
-            <div className="flex items-center gap-2">
-              <button
-                className="text-xs text-stone-400 underline hover:text-stone-600"
-                onClick={() => void changeWorkspace()}
-                title="Choose a different workspace folder"
-              >
-                change…
-              </button>
-              <button
-                onClick={togglePane('docs')}
-                title="Hide docs"
-                className="text-stone-400 hover:text-stone-700"
-              >
-                «
-              </button>
-            </div>
-          </div>
-          <ul className="space-y-1">
-            {docs.map((d) => (
-              <li key={d}>
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="font-semibold">Docs</h2>
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => void openDoc(d)}
-                  className={
-                    activeDoc === d
-                      ? 'w-full rounded bg-stone-200 px-2 py-1 text-left'
-                      : 'w-full rounded px-2 py-1 text-left hover:bg-stone-100'
-                  }
+                  className="text-xs text-stone-400 underline hover:text-stone-600"
+                  onClick={() => void changeWorkspace()}
+                  title="Choose a different workspace folder"
                 >
-                  {d}
+                  change…
                 </button>
-              </li>
-            ))}
-          </ul>
-          {docs.length === 0 && (
-            <p className="text-xs text-stone-400">
-              No markdown files here — create one above or use Open file… (Ctrl+O).
-            </p>
-          )}
-          <div className="mt-3 flex gap-1">
-            <input
-              value={newDocName}
-              ref={newDocInputRef}
-              onChange={(e) => setNewDocName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void createDoc();
-              }}
-              placeholder="new file"
-              className="w-full min-w-0 rounded border border-stone-300 px-1.5 py-0.5 text-xs"
-            />
-            <button
-              onClick={() => void createDoc()}
-              className="rounded px-2 text-xs hover:bg-stone-100"
-              title="New document"
-            >
-              +
-            </button>
-          </div>
-          <div className="mt-4">
-            <input
-              value={searchQuery}
-              ref={searchInputRef}
-              onChange={(e) => onSearch(e.target.value)}
-              placeholder="search notes…"
-              className="w-full rounded border border-stone-300 px-1.5 py-0.5 text-xs outline-none"
-            />
-            {searchResults.length > 0 && (
-              <ul className="mt-1 space-y-1">
-                {searchResults.map((r, i) => (
-                  <li key={`${r.docName}-${i}`}>
-                    <button
-                      onClick={() => void onSearchOpen(r)}
-                      className="w-full rounded px-1.5 py-0.5 text-left hover:bg-stone-100"
-                      title={r.snippet}
-                    >
-                      <span className="flex items-center gap-1 truncate text-xs">
-                        <span className="flex-1 truncate">{r.docName}</span>
-                        {r.status !== 'current' && statusChip(r.status) && (
-                          <span className={`chip ${statusChip(r.status)!.cls}`}>
-                            {statusChip(r.status)!.label}
-                          </span>
-                        )}
-                      </span>
-                      <span className="block truncate text-[10px] text-stone-500">
-                        {renderSnippet(r.snippet)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {searchQuery.trim() && searchResults.length === 0 && (
-              <p className="mt-1 text-[10px] text-stone-400">No matches in workspace</p>
-            )}
-          </div>
-          {outline.length > 0 && (
-            <div className="mt-4">
-              <h3 className="mb-1 text-xs font-semibold text-stone-500">Outline</h3>
-              <ul className="space-y-0.5">
-                {outline.map((o, i) => (
-                  <li key={i}>
-                    <button
-                      onClick={() => editorApiRef.current?.scrollToLine(o.line)}
-                      className="w-full truncate rounded px-1.5 py-0.5 text-left text-xs hover:bg-stone-100"
-                      style={{ paddingLeft: 6 + o.level * 8 }}
-                      title={o.text}
-                    >
-                      {o.text}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+                <button
+                  onClick={togglePane('docs')}
+                  title="Hide docs"
+                  className="text-stone-400 hover:text-stone-700"
+                >
+                  «
+                </button>
+              </div>
             </div>
-          )}
-        </aside>
+            <ul className="space-y-1">
+              {docs.map((d) => (
+                <li key={d}>
+                  <button
+                    onClick={() => void openDoc(d)}
+                    className={
+                      activeDoc === d
+                        ? 'w-full rounded bg-stone-200 px-2 py-1 text-left'
+                        : 'w-full rounded px-2 py-1 text-left hover:bg-stone-100'
+                    }
+                  >
+                    {d}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {docs.length === 0 && (
+              <p className="text-xs text-stone-400">
+                No markdown files here — create one above or use Open file… (Ctrl+O).
+              </p>
+            )}
+            <div className="mt-3 flex gap-1">
+              <input
+                value={newDocName}
+                ref={newDocInputRef}
+                onChange={(e) => setNewDocName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void createDoc();
+                }}
+                placeholder="new file"
+                className="w-full min-w-0 rounded border border-stone-300 px-1.5 py-0.5 text-xs"
+              />
+              <button
+                onClick={() => void createDoc()}
+                className="rounded px-2 text-xs hover:bg-stone-100"
+                title="New document"
+              >
+                +
+              </button>
+            </div>
+            <div className="mt-4">
+              <input
+                value={searchQuery}
+                ref={searchInputRef}
+                onChange={(e) => onSearch(e.target.value)}
+                placeholder="search notes…"
+                className="w-full rounded border border-stone-300 px-1.5 py-0.5 text-xs outline-none"
+              />
+              {searchResults.length > 0 && (
+                <ul className="mt-1 space-y-1">
+                  {searchResults.map((r, i) => (
+                    <li key={`${r.docName}-${i}`}>
+                      <button
+                        onClick={() => void onSearchOpen(r)}
+                        className="w-full rounded px-1.5 py-0.5 text-left hover:bg-stone-100"
+                        title={r.snippet}
+                      >
+                        <span className="flex items-center gap-1 truncate text-xs">
+                          <span className="flex-1 truncate">{r.docName}</span>
+                          {r.status !== 'current' && statusChip(r.status) && (
+                            <span className={`chip ${statusChip(r.status)!.cls}`}>
+                              {statusChip(r.status)!.label}
+                            </span>
+                          )}
+                        </span>
+                        <span className="block truncate text-[10px] text-stone-500">
+                          {renderSnippet(r.snippet)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {searchQuery.trim() && searchResults.length === 0 && (
+                <p className="mt-1 text-[10px] text-stone-400">No matches in workspace</p>
+              )}
+            </div>
+            {outline.length > 0 && (
+              <div className="mt-4">
+                <h3 className="mb-1 text-xs font-semibold text-stone-500">Outline</h3>
+                <ul className="space-y-0.5">
+                  {outline.map((o, i) => (
+                    <li key={i}>
+                      <button
+                        onClick={() => editorApiRef.current?.scrollToLine(o.line)}
+                        className="w-full truncate rounded px-1.5 py-0.5 text-left text-xs hover:bg-stone-100"
+                        style={{ paddingLeft: 6 + o.level * 8 }}
+                        title={o.text}
+                      >
+                        {o.text}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </aside>
         )}
         {collapsed.hist ? (
           <aside className="flex w-8 shrink-0 flex-col items-center bg-[var(--bg2)] py-2">
@@ -1126,296 +1248,299 @@ export default function App() {
           </aside>
         ) : (
           <aside className="w-80 shrink-0 overflow-y-auto p-3 text-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="font-semibold">History</h2>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-stone-400">{snaps.length}</span>
-              <button
-                onClick={togglePane('hist')}
-                title="Hide history"
-                className="text-stone-400 hover:text-stone-700"
-              >
-                «
-              </button>
-            </div>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-1">
-            {(['all', 'auto', 'milestone', 'system', 'ai'] as const).map((k) => (
-              <button
-                key={k}
-                onClick={() => setKindFilter(k)}
-                className={`rounded px-2 py-0.5 text-xs ${
-                  kindFilter === k ? 'bg-stone-300' : 'bg-stone-100 hover:bg-stone-200'
-                }`}
-              >
-                {k}
-              </button>
-            ))}
-          </div>
-          <div className="mt-2 flex items-center gap-1 text-xs">
-            <span className="shrink-0 text-stone-400">diff</span>
-            <select
-              value={diffA ?? ''}
-              onChange={(e) => setDiffA(e.target.value ? Number(e.target.value) : null)}
-              className="min-w-0 flex-1 rounded border border-stone-300 bg-transparent px-1 py-0.5 text-xs outline-none"
-              title="Base snapshot"
-            >
-              <option value="">A…</option>
-              {filtered.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label || s.kind} · {new Date(s.ts).toLocaleTimeString()}
-                </option>
-              ))}
-            </select>
-            <span className="text-stone-400">→</span>
-            <select
-              value={diffB === 'current' ? 'current' : diffB ?? ''}
-              onChange={(e) => setDiffB(e.target.value === 'current' ? 'current' : Number(e.target.value))}
-              className="min-w-0 flex-1 rounded border border-stone-300 bg-transparent px-1 py-0.5 text-xs outline-none"
-              title="Target snapshot"
-            >
-              <option value="current">current</option>
-              {filtered.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label || s.kind} · {new Date(s.ts).toLocaleTimeString()}
-                </option>
-              ))}
-            </select>
-          </div>
-          {diff && (
-            <div className="mt-1 text-[10px] text-stone-500">
-              +{diff.added} added · −{diff.removed} removed
-            </div>
-          )}
-          <div className="mt-2 space-y-2">
-            {snaps.length === 0 && (
-              <p className="text-xs text-stone-400">
-                No history yet — Palimpsest snapshots automatically as you write.
-              </p>
-            )}
-            {grouped.map((g) => (
-              <div key={g.day} className="day-group">
-                <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-stone-400">
-                  {g.day}
-                </h3>
-                <ul className="timeline space-y-1">
-                  {g.items.map((s) => {
-                    const chip = statusChip(s.status);
-                    return (
-                      <li key={s.id} className={`timeline-item ${selected === s.id ? 'selected' : ''}`}>
-                        <button
-                          onClick={() => {
-                            clearDiff();
-                            if (viewMode === 'write') setViewMode('split');
-                            void openPreview(s.id);
-                          }}
-                          onDoubleClick={() => s.kind === 'milestone' && void onRename(s)}
-                          title={s.kind === 'milestone' ? 'Double-click to rename' : undefined}
-                          className={`w-full rounded px-2 py-1 text-left hover:bg-stone-100 ${
-                            selected === s.id ? 'bg-stone-200' : ''
-                          }`}
-                        >
-                          <span className="flex items-center gap-1.5">
-                            <span className={`tl-dot tl-dot-${s.kind}`} />
-                            <span
-                              className={`block flex-1 truncate ${
-                                s.kind === 'milestone' ? 'font-semibold' : ''
-                              }`}
-                            >
-                              {s.label || s.kind}
-                            </span>
-                            {chip && <span className={`chip ${chip.cls}`}>{chip.label}</span>}
-                          </span>
-                          <span className="block text-[11px] tabular-nums text-stone-400">
-                            {new Date(s.ts).toLocaleTimeString()} · {s.words}w · {s.kind}
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
-          </div>
-          <div className="mt-5">
-            <div className="mt-4 flex gap-1">
-              {(['edit', 'chat', 'links'] as const).map((t) => (
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="font-semibold">History</h2>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-stone-400">{snaps.length}</span>
                 <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={`px-2 py-0.5 text-xs ${tab === t ? 'seg-active' : 'text-stone-500 hover:bg-stone-100 hover:text-stone-800'}`}
+                  onClick={togglePane('hist')}
+                  title="Hide history"
+                  className="text-stone-400 hover:text-stone-700"
                 >
-                  {t === 'edit' ? 'Edit' : t === 'chat' ? 'Chat' : 'Links'}
+                  «
+                </button>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {(['all', 'auto', 'milestone', 'system', 'ai'] as const).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setKindFilter(k)}
+                  className={`rounded px-2 py-0.5 text-xs ${
+                    kindFilter === k ? 'bg-stone-300' : 'bg-stone-100 hover:bg-stone-200'
+                  }`}
+                >
+                  {k}
                 </button>
               ))}
             </div>
-            {tab === 'edit' ? (
-              <>
-                <h2 className="mb-1 font-semibold">
-                  Ask AI
-                  <button
-                    className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-normal hover:bg-stone-100"
-                    onClick={() => setShowAiCfg((v) => !v)}
-                  >
-                    {showAiCfg ? 'Done' : 'Settings'}
-                  </button>
-                </h2>
-                {showAiCfg ? (
-                  <div className="mb-2 rounded border border-stone-300 p-2 text-xs">
-                    <label className="block">
-                      <span className="text-stone-500">Server URL</span>
-                      <input
-                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none"
-                        value={aiCfg.baseUrl}
-                        onChange={(e) => setAiCfg((c) => ({ ...c, baseUrl: e.target.value }))}
-                        placeholder="http://127.0.0.1:11434 (Ollama) or https://…/v1"
-                      />
-                    </label>
-                    <label className="mt-1 block">
-                      <span className="text-stone-500">Model</span>
-                      <input
-                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none"
-                        value={aiCfg.model}
-                        onChange={(e) => setAiCfg((c) => ({ ...c, model: e.target.value }))}
-                        placeholder="llama3.2 / gpt-4o-mini / local-model"
-                      />
-                    </label>
-                    <label className="mt-1 block">
-                      <span className="text-stone-500">
-                        API key {isLocalUrl(aiCfg.baseUrl) ? '(not needed for local servers)' : ''}
-                      </span>
-                      <input
-                        type="password"
-                        className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none"
-                        value={aiKey}
-                        onChange={(e) => setAiKey(e.target.value)}
-                        placeholder={isLocalUrl(aiCfg.baseUrl) ? 'leave empty' : 'sk-…'}
-                      />
-                    </label>
-                    <div className="mt-2 flex items-center gap-2">
-                      <button
-                        className="btn-primary"
-                        onClick={saveAiCfg}
-                      >
-                        Save
-                      </button>
-                      <span className="text-[10px] text-stone-400">
-                        URL & model stay on this device; the key is kept in memory for this session
-                        only and never written to disk.
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <span className="mb-1 block text-[10px] text-stone-400">
-                    {aiCfg.baseUrl} · {aiCfg.model}
-                    {aiKey ? ' · key set (memory only)' : ''}
-                  </span>
-                )}
-                <textarea
-                  className="w-full resize-none rounded border border-stone-300 p-2 text-xs outline-none"
-                  rows={3}
-                  placeholder={`Ask AI · ${provider.model} — edit instruction`}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                />
-                <div className="mt-1 flex gap-2">
-                  <button
-                    className="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100 disabled:opacity-50"
-                    onClick={() => void onPropose()}
-                    disabled={aiBusy || !prompt.trim()}
-                  >
-                    {aiBusy ? 'Proposing…' : localOnly ? 'Propose (local)' : 'Propose'}
-                  </button>
-                  {proposal && (
-                    <>
-                      <button
-                        className="btn-primary"
-                        onClick={() => void onAccept()}
-                        disabled={busy}
-                      >
-                        Accept +{proposal.added} −{proposal.removed}
-                      </button>
-                      <button
-                        className="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
-                        onClick={() => setProposal(null)}
-                      >
-                        Reject
-                      </button>
-                    </>
-                  )}
-                </div>
-                {aiMsg && <div className="mt-1 text-xs text-red-600">{aiMsg}</div>}
-              </>
-            ) : (
-              <>
-                <div className="max-h-64 overflow-y-auto rounded border border-stone-200 p-2 text-xs">
-                  {chat.length === 0 && (
-                    <div className="text-stone-400">
-                      Ask about this document — answers get recalled history context.
-                    </div>
-                  )}
-                  {chat.map((m, i) => (
-                    <div
-                      key={i}
-                      className={`mb-1 ${m.role === 'user' ? 'text-stone-800' : 'text-stone-600'}`}
-                    >
-                      <span className="font-semibold">{m.role === 'user' ? 'You' : 'AI'}:</span>{' '}
-                      <span className="whitespace-pre-wrap">{m.content}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-1 flex gap-1">
-                  <input
-                    className="flex-1 rounded border border-stone-300 px-2 py-1 text-xs outline-none"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && void onSend()}
-                    placeholder={`Ask AI · ${provider.model}`}
-                  />
-                  <button
-                    className="btn-primary"
-                    onClick={() => void onSend()}
-                    disabled={chatBusy || !chatInput.trim()}
-                  >
-                    Send
-                  </button>
-                </div>
-                {usage > 0 && (
-                  <div className="mt-1 text-[10px] text-stone-400">
-                    {usage.toLocaleString()} chars exchanged this session
-                  </div>
-                )}
-              </>
-            )}
-            {tab === 'links' && (
-              <div className="text-xs">
-                <h2 className="mb-1 font-semibold">Backlinks</h2>
-                {incomingLinks.length === 0 ? (
-                  <p className="text-stone-400">
-                    Nothing links to this note yet. Use [[wikilinks]] in other notes to connect them
-                    here.
-                  </p>
-                ) : (
-                  <ul className="space-y-1">
-                    {incomingLinks.map((f) => (
-                      <li key={f}>
-                        <button
-                          onClick={() => void openDoc(f)}
-                          className="w-full rounded px-2 py-1 text-left hover:bg-stone-100"
-                        >
-                          {f}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <div className="mt-4 text-stone-400">
-                  {links.length} links across {docs.length} notes
-                </div>
+            <div className="mt-2 flex items-center gap-1 text-xs">
+              <span className="shrink-0 text-stone-400">diff</span>
+              <select
+                value={diffA ?? ''}
+                onChange={(e) => setDiffA(e.target.value ? Number(e.target.value) : null)}
+                className="min-w-0 flex-1 rounded border border-stone-300 bg-transparent px-1 py-0.5 text-xs outline-none"
+                title="Base snapshot"
+              >
+                <option value="">A…</option>
+                {filtered.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label || s.kind} · {new Date(s.ts).toLocaleTimeString()}
+                  </option>
+                ))}
+              </select>
+              <span className="text-stone-400">→</span>
+              <select
+                value={diffB === 'current' ? 'current' : (diffB ?? '')}
+                onChange={(e) =>
+                  setDiffB(e.target.value === 'current' ? 'current' : Number(e.target.value))
+                }
+                className="min-w-0 flex-1 rounded border border-stone-300 bg-transparent px-1 py-0.5 text-xs outline-none"
+                title="Target snapshot"
+              >
+                <option value="current">current</option>
+                {filtered.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label || s.kind} · {new Date(s.ts).toLocaleTimeString()}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {diff && (
+              <div className="mt-1 text-[10px] text-stone-500">
+                +{diff.added} added · −{diff.removed} removed
               </div>
             )}
-          </div>
-        </aside>
+            <div className="mt-2 space-y-2">
+              {snaps.length === 0 && (
+                <p className="text-xs text-stone-400">
+                  No history yet — Palimpsest snapshots automatically as you write.
+                </p>
+              )}
+              {grouped.map((g) => (
+                <div key={g.day} className="day-group">
+                  <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                    {g.day}
+                  </h3>
+                  <ul className="timeline space-y-1">
+                    {g.items.map((s) => {
+                      const chip = statusChip(s.status);
+                      return (
+                        <li
+                          key={s.id}
+                          className={`timeline-item ${selected === s.id ? 'selected' : ''}`}
+                        >
+                          <button
+                            onClick={() => {
+                              clearDiff();
+                              if (viewMode === 'write') setViewMode('split');
+                              void openPreview(s.id);
+                            }}
+                            onDoubleClick={() => s.kind === 'milestone' && void onRename(s)}
+                            title={s.kind === 'milestone' ? 'Double-click to rename' : undefined}
+                            className={`w-full rounded px-2 py-1 text-left hover:bg-stone-100 ${
+                              selected === s.id ? 'bg-stone-200' : ''
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <span className={`tl-dot tl-dot-${s.kind}`} />
+                              <span
+                                className={`block flex-1 truncate ${
+                                  s.kind === 'milestone' ? 'font-semibold' : ''
+                                }`}
+                              >
+                                {s.label || s.kind}
+                              </span>
+                              {chip && <span className={`chip ${chip.cls}`}>{chip.label}</span>}
+                            </span>
+                            <span className="block text-[11px] tabular-nums text-stone-400">
+                              {new Date(s.ts).toLocaleTimeString()} · {s.words}w · {s.kind}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5">
+              <div className="mt-4 flex gap-1">
+                {(['edit', 'chat', 'links'] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTab(t)}
+                    className={`px-2 py-0.5 text-xs ${tab === t ? 'seg-active' : 'text-stone-500 hover:bg-stone-100 hover:text-stone-800'}`}
+                  >
+                    {t === 'edit' ? 'Edit' : t === 'chat' ? 'Chat' : 'Links'}
+                  </button>
+                ))}
+              </div>
+              {tab === 'edit' ? (
+                <>
+                  <h2 className="mb-1 font-semibold">
+                    Ask AI
+                    <button
+                      className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-normal hover:bg-stone-100"
+                      onClick={() => setShowAiCfg((v) => !v)}
+                    >
+                      {showAiCfg ? 'Done' : 'Settings'}
+                    </button>
+                  </h2>
+                  {showAiCfg ? (
+                    <div className="mb-2 rounded border border-stone-300 p-2 text-xs">
+                      <label className="block">
+                        <span className="text-stone-500">Server URL</span>
+                        <input
+                          className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none"
+                          value={aiCfg.baseUrl}
+                          onChange={(e) => setAiCfg((c) => ({ ...c, baseUrl: e.target.value }))}
+                          placeholder="http://127.0.0.1:11434 (Ollama) or https://…/v1"
+                        />
+                      </label>
+                      <label className="mt-1 block">
+                        <span className="text-stone-500">Model</span>
+                        <input
+                          className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none"
+                          value={aiCfg.model}
+                          onChange={(e) => setAiCfg((c) => ({ ...c, model: e.target.value }))}
+                          placeholder="llama3.2 / gpt-4o-mini / local-model"
+                        />
+                      </label>
+                      <label className="mt-1 block">
+                        <span className="text-stone-500">
+                          API key{' '}
+                          {isLocalUrl(aiCfg.baseUrl) ? '(not needed for local servers)' : ''}
+                        </span>
+                        <input
+                          type="password"
+                          className="mt-0.5 w-full rounded border border-stone-300 px-2 py-1 outline-none"
+                          value={aiKey}
+                          onChange={(e) => setAiKey(e.target.value)}
+                          placeholder={isLocalUrl(aiCfg.baseUrl) ? 'leave empty' : 'sk-…'}
+                        />
+                      </label>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button className="btn-primary" onClick={saveAiCfg}>
+                          Save
+                        </button>
+                        <span className="text-[10px] text-stone-400">
+                          URL & model stay on this device; the key is kept in memory for this
+                          session only and never written to disk.
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="mb-1 block text-[10px] text-stone-400">
+                      {aiCfg.baseUrl} · {aiCfg.model}
+                      {aiKey ? ' · key set (memory only)' : ''}
+                    </span>
+                  )}
+                  <textarea
+                    className="w-full resize-none rounded border border-stone-300 p-2 text-xs outline-none"
+                    rows={3}
+                    placeholder={`Ask AI · ${provider.model} — edit instruction`}
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                  />
+                  <div className="mt-1 flex gap-2">
+                    <button
+                      className="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100 disabled:opacity-50"
+                      onClick={() => void onPropose()}
+                      disabled={aiBusy || !prompt.trim()}
+                    >
+                      {aiBusy ? 'Proposing…' : localOnly ? 'Propose (local)' : 'Propose'}
+                    </button>
+                    {proposal && (
+                      <>
+                        <button
+                          className="btn-primary"
+                          onClick={() => void onAccept()}
+                          disabled={busy}
+                        >
+                          Accept +{proposal.added} −{proposal.removed}
+                        </button>
+                        <button
+                          className="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+                          onClick={() => setProposal(null)}
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {aiMsg && <div className="mt-1 text-xs text-red-600">{aiMsg}</div>}
+                </>
+              ) : (
+                <>
+                  <div className="max-h-64 overflow-y-auto rounded border border-stone-200 p-2 text-xs">
+                    {chat.length === 0 && (
+                      <div className="text-stone-400">
+                        Ask about this document — answers get recalled history context.
+                      </div>
+                    )}
+                    {chat.map((m, i) => (
+                      <div
+                        key={i}
+                        className={`mb-1 ${m.role === 'user' ? 'text-stone-800' : 'text-stone-600'}`}
+                      >
+                        <span className="font-semibold">{m.role === 'user' ? 'You' : 'AI'}:</span>{' '}
+                        <span className="whitespace-pre-wrap">{m.content}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-1 flex gap-1">
+                    <input
+                      className="flex-1 rounded border border-stone-300 px-2 py-1 text-xs outline-none"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && void onSend()}
+                      placeholder={`Ask AI · ${provider.model}`}
+                    />
+                    <button
+                      className="btn-primary"
+                      onClick={() => void onSend()}
+                      disabled={chatBusy || !chatInput.trim()}
+                    >
+                      Send
+                    </button>
+                  </div>
+                  {usage > 0 && (
+                    <div className="mt-1 text-[10px] text-stone-400">
+                      {usage.toLocaleString()} chars exchanged this session
+                    </div>
+                  )}
+                </>
+              )}
+              {tab === 'links' && (
+                <div className="text-xs">
+                  <h2 className="mb-1 font-semibold">Backlinks</h2>
+                  {incomingLinks.length === 0 ? (
+                    <p className="text-stone-400">
+                      Nothing links to this note yet. Use [[wikilinks]] in other notes to connect
+                      them here.
+                    </p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {incomingLinks.map((f) => (
+                        <li key={f}>
+                          <button
+                            onClick={() => void openDoc(f)}
+                            className="w-full rounded px-2 py-1 text-left hover:bg-stone-100"
+                          >
+                            {f}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="mt-4 text-stone-400">
+                    {links.length} links across {docs.length} notes
+                  </div>
+                </div>
+              )}
+            </div>
+          </aside>
         )}
         <main className="flex min-h-0 flex-1 flex-col">
           {viewMode !== 'read' && (
@@ -1449,6 +1574,7 @@ export default function App() {
             onPointerUp={() => {
               if (!dragRef.current) return;
               dragRef.current = null;
+              setDragging(false);
               localStorage.setItem('palimpsest.split', String(splitPct));
             }}
           >
@@ -1468,11 +1594,12 @@ export default function App() {
             )}
             {viewMode === 'split' && (
               <div
-                className={`split-divider ${dragRef.current ? 'dragging' : ''}`}
+                className={`split-divider ${dragging ? 'dragging' : ''}`}
                 title="Drag to resize"
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
                   dragRef.current = { startX: e.clientX, startPct: splitPct };
+                  setDragging(true);
                 }}
               />
             )}
@@ -1516,11 +1643,7 @@ export default function App() {
                             swap
                           </button>
                         )}
-                        <button
-                          className="btn-primary ml-auto"
-                          onClick={clearDiff}
-                          title="Esc"
-                        >
+                        <button className="btn-primary ml-auto" onClick={clearDiff} title="Esc">
                           Back to document
                         </button>
                       </div>
@@ -1556,7 +1679,10 @@ export default function App() {
             )}
           </div>
           <footer className="flex items-center gap-3 px-3 py-1.5 text-xs text-stone-400">
-            <label className="flex items-center gap-1 text-stone-500" title="Cursor stays centered while typing">
+            <label
+              className="flex items-center gap-1 text-stone-500"
+              title="Cursor stays centered while typing"
+            >
               <input
                 type="checkbox"
                 checked={typewriter}

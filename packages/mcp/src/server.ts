@@ -62,6 +62,12 @@ export async function runHttpServer(ctx: McpContext, port = 3000): Promise<Serve
       try {
         await server.connect(transport);
         await transport.handleRequest(req, res);
+        // Close on response end (the SDK's documented stateless pattern) —
+        // without this every request leaked its transport/session pair.
+        res.on('close', () => {
+          void transport.close().catch(() => {});
+          void server.close().catch(() => {});
+        });
       } catch (err) {
         console.error('palimpsest mcp http error:', err);
         if (!res.headersSent) res.writeHead(500);

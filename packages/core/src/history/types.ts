@@ -13,8 +13,10 @@ export interface SnapshotFs {
   /** Filenames of all snapshot files, live and archived. */
   list(): Promise<{ name: string; archived: boolean }[]>;
   read(name: string, archived: boolean): Promise<string>;
-  /** Write a new snapshot file (atomic: temp + rename). */
-  write(name: string, text: string): Promise<void>;
+  /** Write a snapshot file (atomic: temp + rename). `archived` targets
+   * archive/ — needed so in-place edits of archived snapshots (e.g. label
+   * renames) don't spawn duplicates in snapshots/. */
+  write(name: string, text: string, archived?: boolean): Promise<void>;
   /** Move a snapshot file from snapshots/ to archive/. */
   moveToArchive(name: string): Promise<void>;
 }

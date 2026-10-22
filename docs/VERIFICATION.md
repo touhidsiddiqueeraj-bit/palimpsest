@@ -7,18 +7,18 @@ app's own installed artifacts (deb contents, `~/.config`, `~/.local/share`).
 
 ## Summary
 
-| Gate                          | Result                                                                 |
-| ----------------------------- | ---------------------------------------------------------------------- |
-| Unit tests                    | core **45/45** · ai **9/9** · mcp **18/18**                            |
-| Typecheck                     | 0 errors (strict TS across packages)                                   |
-| Lint + Prettier               | 0 errors / clean                                                       |
-| MCP conformance suite         | green (vitest, included in `pnpm test`)                                |
-| Live stdio server             | 13/13 smoke checks PASS (incl. label-latest milestone)                |
-| Live Streamable HTTP          | get_stats / recall / get_outline over raw `fetch()`                    |
-| Registered as an opencode MCP | tools called in a running opencode session                             |
-| Desktop: file-manager open    | `xdg-open notes.md` → app boots, full history + reconcile snapshot     |
+| Gate                          | Result                                                                              |
+| ----------------------------- | ----------------------------------------------------------------------------------- |
+| Unit tests                    | core **45/45** · ai **9/9** · mcp **18/18**                                         |
+| Typecheck                     | 0 errors (strict TS across packages)                                                |
+| Lint + Prettier               | 0 errors / clean                                                                    |
+| MCP conformance suite         | green (vitest, included in `pnpm test`)                                             |
+| Live stdio server             | 13/13 smoke checks PASS (incl. label-latest milestone)                              |
+| Live Streamable HTTP          | get_stats / recall / get_outline over raw `fetch()`                                 |
+| Registered as an opencode MCP | tools called in a running opencode session                                          |
+| Desktop: file-manager open    | `xdg-open notes.md` → app boots, full history + reconcile snapshot                  |
 | Desktop: OS registration      | deb ships `palimpsest.desktop` (MIME `text/markdown`, `%F`); `gio mime` default set |
-| CI (GitHub Actions)           | `test` job green at HEAD of this documentation                         |
+| CI (GitHub Actions)           | `test` job green at HEAD of this documentation                                      |
 
 ## 1. Unit tests (local)
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
@@ -104,6 +104,7 @@ function slashSource(context: CompletionContext): CompletionResult | null {
   };
 }
 
+const typewriterCompartment = new Compartment();
 const typewriterCenter = EditorView.updateListener.of((u) => {
   const sel = u.state.selection.main;
   if (u.selectionSet && sel.anchor !== u.startState.selection.main.anchor) {
@@ -125,6 +126,7 @@ export function CodeEditor({
   typewriter: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -144,7 +146,7 @@ export function CodeEditor({
         markdown(),
         syntaxHighlighting(mdStyle),
         shortcuts,
-        typewriter ? typewriterCenter : [],
+        typewriterCompartment.of(typewriter ? typewriterCenter : []),
         keymap.of([
           ...closeBracketsKeymap,
           ...searchKeymap,
@@ -163,6 +165,7 @@ export function CodeEditor({
       ],
     });
     const view = new EditorView({ state, parent: host.current });
+    viewRef.current = view;
     apiRef.current = {
       wrap: (before, after, url) => wrap(view, before, after, url),
       insert: (text) => {
@@ -194,10 +197,32 @@ export function CodeEditor({
     return () => {
       window.clearTimeout(t);
       view.destroy();
+      viewRef.current = null;
       apiRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // External value changes (restore, import, AI accept) must land in the
+  // editor: the view owns its own doc, so setText alone left the editor pane
+  // showing the pre-restore text and the next keystroke reverted the restore.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const current = view.state.doc.toString();
+    if (value !== current) {
+      view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+    }
+  }, [value]);
+
+  // Toggle typewriter without rebuilding the editor (keeps undo history/cursor).
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: typewriterCompartment.reconfigure(typewriter ? typewriterCenter : []),
+    });
+  }, [typewriter]);
 
   return <div ref={host} className="h-full w-full overflow-hidden" />;
 }

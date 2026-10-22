@@ -26,9 +26,10 @@ export function nodeSnapshotFs(root: string): SnapshotFs {
     async read(name, archived) {
       return readFile(join(archived ? archive : live, name), 'utf8');
     },
-    async write(name, text) {
-      await ensure(live);
-      const final = join(live, name);
+    async write(name, text, archived = false) {
+      const dir = archived ? archive : live;
+      await ensure(dir);
+      const final = join(dir, name);
       const tmp = final + '.tmp';
       await writeFile(tmp, text, 'utf8');
       await rename(tmp, final); // atomic on same fs

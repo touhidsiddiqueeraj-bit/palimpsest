@@ -123,6 +123,11 @@ function decode(text: string): string {
   return text.replace(/&(amp|lt|gt|quot|#39);/g, (m) => UNESCAPE[m] ?? m);
 }
 
+/** UTF-8-safe base64 (the deprecated escape/unescape trick breaks on non-Latin1). */
+const encodeB64 = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+const decodeB64 = (s: string) =>
+  new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
+
 /**
  * Replaces diagram-lang <pre data-lang="x"><code>…</code></pre> with
  * placeholder divs carrying the base64 source. Returns the new HTML.
@@ -135,7 +140,7 @@ export function decorateFences(html: string): string {
         return whole;
       }
       const code = decode(codeHtml);
-      const b64 = btoa(unescape(encodeURIComponent(code)));
+      const b64 = encodeB64(code);
       return (
         `<div class="fence-svg" data-lang="${lang}" data-code="${b64}">` +
         `<button class="fence-render">Render diagram (${lang})</button></div>`
@@ -151,11 +156,12 @@ export function wireFenceButtons(
 ): () => void {
   const els = Array.from(root.querySelectorAll<HTMLButtonElement>('button.fence-render'));
   const subs: Array<{ el: HTMLElement; cb: () => void }> = [];
+  const objectUrls: string[] = [];
   for (const btn of els) {
     const box = btn.closest<HTMLElement>('.fence-svg');
     if (!box) continue;
     const lang = box.dataset.lang ?? '';
-    const code = decodeURIComponent(escape(atob(box.dataset.code ?? '')));
+    const code = decodeB64(box.dataset.code ?? '');
     const cb = async () => {
       btn.disabled = true;
       btn.textContent = 'Rendering…';
@@ -168,6 +174,7 @@ export function wireFenceButtons(
         if (!r.ok) throw new Error(`kroki: HTTP ${r.status}`);
         const svg = await r.blob();
         const url = URL.createObjectURL(svg);
+        objectUrls.push(url);
         box.innerHTML = `<img src="${url}" alt="rendered ${lang} diagram">`;
         onRequest(true, lang);
       } catch (e) {
@@ -180,5 +187,8 @@ export function wireFenceButtons(
   }
   return () => {
     for (const s of subs) s.el.removeEventListener('click', s.cb);
+    // Rendered diagrams are re-created on every preview re-render; without
+    // revoking, each render leaked its blob URL for the session.
+    for (const url of objectUrls) URL.revokeObjectURL(url);
   };
 }

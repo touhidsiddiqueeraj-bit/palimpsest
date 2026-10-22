@@ -138,13 +138,16 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
   ): Promise<SnapshotInfo> {
     const ts = Date.now();
     const { name: docName } = await resolveDoc(docId);
+    // One index query + one directory listing up front: the collision loop used
+    // to re-list the snapshot dirs (two IPC round-trips in the desktop app) on
+    // every iteration of the bump loop.
+    const existingIds = new Set(
+      (await db.select<{ id: number }>('SELECT id FROM snapshots')).map((r) => r.id),
+    );
+    const liveNames = new Set((await fs.list()).filter((f) => !f.archived).map((f) => f.name));
     let id = ts;
-    // ponytail: id doubles as timestamp; bump on collision with an existing file or index row
     let name = `${id}-${kind}.md`;
-    const taken = async (i: number, n: string) =>
-      (await db.select('SELECT 1 FROM snapshots WHERE id = ?', [i])).length > 0 ||
-      (await fs.list()).some((f) => f.name === n && !f.archived);
-    while (await taken(id, name)) {
+    while (existingIds.has(id) || liveNames.has(name)) {
       id++;
       name = `${id}-${kind}.md`;
     }
@@ -262,7 +265,11 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
       ts: r.ts,
       archived: Boolean(r.archived),
       status:
-        r.text === r.current ? 'current' : overlap(r.text, r.current) > 0 ? 'modified' : 'deleted',
+        r.text === r.current
+          ? 'current'
+          : sharesAnyWord(r.text, r.current)
+            ? 'modified'
+            : 'deleted',
     }));
   }
 
@@ -336,7 +343,7 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
   /** Rename a milestone: updates the label in the snapshot file and the index.
    * The document text itself is never modified — only the frontmatter label. */
   async function renameSnapshot(docId: number, snapshotId: number, label: string): Promise<void> {
-    const rows = await db.select<{ file: string; archived: boolean; text: string }>(
+    const rows = await db.select<{ file: string; archived: number; text: string }>(
       `SELECT s.file AS file, s.archived AS archived, h.text AS text
        FROM snapshots s JOIN history_fts h ON h.rowid = s.id WHERE s.doc_id = ? AND s.id = ?`,
       [docId, snapshotId],
@@ -345,18 +352,30 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
     if (!r) throw new Error(`snapshot ${snapshotId} not found for doc ${docId}`);
     const content = await fs.read(r.file, Boolean(r.archived));
     const { fm, text } = parseSnapshotFile(content);
-    await fs.write(r.file, encodeSnapshotFile({ ...fm, label }, text));
+    // Write back to the dir the snapshot actually lives in — writing an archived
+    // snapshot to snapshots/ would leave a duplicate file that reindex() then
+    // records as a second snapshot.
+    await fs.write(r.file, encodeSnapshotFile({ ...fm, label }, text), Boolean(r.archived));
     await db.execute('UPDATE snapshots SET label = ? WHERE id = ?', [label, snapshotId]);
   }
 
-  /** FTS across documents and history; fallback to LIKE on query errors. */
-  async function search(query: string, limit = 20, includeDeleted = true): Promise<SearchHit[]> {
+  /** FTS across documents and history; fallback to LIKE on query errors.
+   * `opts.doc` restricts results to one document at the SQL level so a busy
+   * workspace cannot crowd out hits from the doc being searched. */
+  async function search(
+    query: string,
+    limit = 20,
+    includeDeleted = true,
+    opts: { doc?: string } = {},
+  ): Promise<SearchHit[]> {
     const q = query.trim();
     if (!q) return [];
     const hits: SearchHit[] = [];
     const fq = ftsQuery(q);
     if (!fq) return [];
     const like = `%${q}%`;
+    const docScope = opts.doc ? ' AND d.name = ?' : '';
+    const docParams = opts.doc ? [opts.doc] : [];
     let docs: Array<{ docId: number; name: string; text: string }>;
     let hist: Array<{
       docId: number;
@@ -371,27 +390,27 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
       docs = await db.select(
         `SELECT d.id AS docId, d.name AS name, d.text AS text
          FROM documents_fts JOIN documents d ON d.id = documents_fts.rowid
-         WHERE documents_fts MATCH ? ORDER BY rank LIMIT ?`,
-        [fq, limit],
+         WHERE documents_fts MATCH ?${docScope} ORDER BY rank LIMIT ?`,
+        [fq, ...docParams, limit],
       );
       hist = await db.select(
         `SELECT h.doc_id AS docId, d.name AS docName, h.snapshot_id AS snapshotId, s.kind AS kind, s.ts AS ts,
                 h.text AS text, s.archived AS archived
          FROM history_fts h JOIN snapshots s ON s.id = h.rowid JOIN documents d ON d.id = h.doc_id
-         WHERE history_fts MATCH ? ORDER BY rank LIMIT ?`,
-        [fq, limit * 2],
+         WHERE history_fts MATCH ?${docScope} ORDER BY rank LIMIT ?`,
+        [fq, ...docParams, limit * 2],
       );
     } catch {
       docs = await db.select(
-        `SELECT d.id AS docId, d.name AS name, d.text AS text FROM documents d WHERE d.text LIKE ? OR d.name LIKE ? LIMIT ?`,
-        [like, like, limit],
+        `SELECT d.id AS docId, d.name AS name, d.text AS text FROM documents d WHERE (d.text LIKE ? OR d.name LIKE ?)${docScope} LIMIT ?`,
+        [like, like, ...docParams, limit],
       );
       hist = await db.select(
         `SELECT h.doc_id AS docId, d.name AS docName, h.snapshot_id AS snapshotId, s.kind AS kind, s.ts AS ts,
                 h.text AS text, s.archived AS archived
          FROM history_fts h JOIN snapshots s ON s.id = h.rowid JOIN documents d ON d.id = h.doc_id
-         WHERE h.text LIKE ? LIMIT ?`,
-        [like, limit * 2],
+         WHERE h.text LIKE ?${docScope} LIMIT ?`,
+        [like, ...docParams, limit * 2],
       );
     }
     for (const d of docs)
@@ -409,11 +428,9 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
       ]),
     );
     for (const h of hist) {
-      const status = statusOf(
-        h.docId,
-        current.get(h.docId) ?? '',
-        await snapshotText(h.docId, h.snapshotId),
-      );
+      // h.text is already the snapshot text — the old code re-queried it per hit
+      // (an N+1 that meant up to `limit * 2` sequential queries per keystroke).
+      const status = statusOf(h.docId, current.get(h.docId) ?? '', h.text);
       if (!includeDeleted && status !== 'current') continue;
       hits.push({
         source: 'history',
@@ -524,24 +541,20 @@ export function createHistoryStore(db: SqliteDb, fs: SnapshotFs) {
 
   const statusOf = (_docId: number, currentText: string, snapshotText: string): SnapshotStatus => {
     if (snapshotText === currentText) return 'current';
-    return overlap(snapshotText, currentText) > 0 ? 'modified' : 'deleted';
+    return sharesAnyWord(snapshotText, currentText) ? 'modified' : 'deleted';
   };
 
-  async function snapshotText(_docId: number, snapshotId: number): Promise<string> {
-    const rows = await db.select<{ text: string }>('SELECT text FROM history_fts WHERE rowid = ?', [
-      snapshotId,
-    ]);
-    return rows[0]?.text ?? '';
-  }
-
-  /** Word-overlap ratio in (0,1]; 0 = no shared words. */
-  function overlap(a: string, b: string): number {
-    const words = (s: string) => new Set(s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
-    const wa = words(a);
-    if (wa.size === 0) return 0;
-    let shared = 0;
-    for (const w of words(b)) if (wa.has(w)) shared++;
-    return shared / wa.size;
+  /** True when the two texts share at least one word. Status classification only
+   * needs the boolean, so this early-exits instead of computing the full
+   * overlap ratio — list() calls it once per snapshot row (up to 300). */
+  function sharesAnyWord(a: string, b: string): boolean {
+    const wa = a.toLowerCase().match(/[\p{L}\p{N}]+/gu);
+    if (!wa?.length) return false;
+    const set = new Set(wa);
+    for (const w of b.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+      if (set.has(w)) return true;
+    }
+    return false;
   }
 
   /** Move retired auto/system snapshots (newest K kept) to archive/. */
