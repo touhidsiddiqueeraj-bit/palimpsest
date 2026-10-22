@@ -1,8 +1,8 @@
 use std::{fs, path::PathBuf, sync::mpsc, sync::Mutex};
 
-use tauri::{AppHandle, Manager};
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
 use tauri::RunEvent;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs::FsExt;
 
