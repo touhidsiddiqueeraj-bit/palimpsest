@@ -1,8 +1,43 @@
-use std::{fs, path::PathBuf, sync::mpsc};
+use std::{fs, path::PathBuf, sync::mpsc, sync::Mutex};
 
 use tauri::{AppHandle, Manager};
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+use tauri::RunEvent;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs::FsExt;
+
+/** File opened via macOS "Open with…" (delivered as a RunEvent::Opened URL
+ * string, not argv). Stashed at startup so the frontend's initial_open query
+ * finds it. */
+struct OpenedFile(Mutex<Option<PathBuf>>);
+
+/** "file:///path/My%20Notes.md" (or a bare path) -> PathBuf, percent-decoded.
+ * Only needed where RunEvent::Opened exists (macOS/iOS/Android). */
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+fn file_url_to_path(raw: &str) -> PathBuf {
+    let Some(rest) = raw.strip_prefix("file://") else {
+        return PathBuf::from(raw);
+    };
+    let path = rest.trim_start_matches("localhost/");
+    let bytes = path.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3])
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok());
+            if let Some(b) = hex {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    PathBuf::from(String::from_utf8_lossy(&out).into_owned())
+}
 
 fn workspace_file(app: &AppHandle) -> Option<PathBuf> {
     app.path()
@@ -27,6 +62,19 @@ fn persist_workspace(app: &AppHandle, path: &std::path::Path) -> tauri::Result<(
         fs::write(&f, path.to_string_lossy().as_bytes()).map_err(tauri::Error::Io)?;
     }
     Ok(())
+}
+
+fn open_md_file(app: &AppHandle, path: PathBuf) -> Option<(String, String)> {
+    if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
+        return None;
+    }
+    let dir = path.parent()?;
+    scope_workspace(app, dir).ok()?;
+    persist_workspace(app, dir).ok()?;
+    Some((
+        dir.to_string_lossy().to_string(),
+        path.file_name()?.to_string_lossy().to_string(),
+    ))
 }
 
 #[tauri::command]
@@ -58,22 +106,23 @@ async fn pick_workspace(app: AppHandle) -> Result<Option<String>, String> {
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
-/** Open a .md file passed on the command line ("Open with…" in file managers):
+/** Open a .md file passed on the command line ("Open with…" on Windows/Linux)
+ * or via the macOS Opened event ("Open with…" in Finder / file manager):
  * scope its folder, persist it as the workspace, return (workspace, name). */
 #[tauri::command]
 fn initial_open(app: AppHandle) -> Option<(String, String)> {
+    if let Some(state) = app.try_state::<OpenedFile>() {
+        if let Ok(mut slot) = state.0.lock() {
+            if let Some(path) = slot.take() {
+                if let Some(found) = open_md_file(&app, path) {
+                    return Some(found);
+                }
+            }
+        }
+    }
     let arg = std::env::args().nth(1)?;
     let path = PathBuf::from(arg.strip_prefix("file://").unwrap_or(&arg));
-    if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
-        return None;
-    }
-    let dir = path.parent()?;
-    scope_workspace(&app, dir).ok()?;
-    persist_workspace(&app, dir).ok()?;
-    Some((
-        dir.to_string_lossy().to_string(),
-        path.file_name()?.to_string_lossy().to_string(),
-    ))
+    open_md_file(&app, path)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -82,11 +131,30 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(OpenedFile(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             get_workspace,
             pick_workspace,
             initial_open
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, _event| {
+            // macOS "Open with…": the file arrives as an Apple Event, surfaced
+            // as RunEvent::Opened (URL strings). Stash it for initial_open.
+            // The variant only exists on macOS/iOS/Android; on other platforms
+            // the callback does nothing.
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            if let RunEvent::Opened { urls } = _event {
+                for url in urls {
+                    let path = file_url_to_path(&url);
+                    if let Some(state) = _app.try_state::<OpenedFile>() {
+                        if let Ok(mut slot) = state.0.lock() {
+                            *slot = Some(path);
+                            break;
+                        }
+                    }
+                }
+            }
+        });
 }

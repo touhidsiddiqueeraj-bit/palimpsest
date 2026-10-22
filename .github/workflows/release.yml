@@ -3,6 +3,11 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to (re-)build a release for, e.g. v0.2'
+        required: true
 
 permissions:
   contents: write
@@ -37,6 +42,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
             javascriptcoregtk-4.1-dev librsvg2-dev patchelf
+      # GitHub's ARM macOS runners only preinstall aarch64-apple-darwin; the
+      # Intel-Mac matrix entry must add its Rust target or tauri build fails with
+      # "Target x86_64-apple-darwin is not installed".
+      - name: Add Rust cross-compile target (macOS x86_64)
+        if: contains(matrix.args, 'x86_64-apple-darwin')
+        run: rustup target add x86_64-apple-darwin
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build + release (tauri-action)
@@ -44,10 +55,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Palimpsest ${{ github.ref_name }}'
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: 'Palimpsest ${{ inputs.tag || github.ref_name }}'
           releaseBody: |
-            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md) for release notes.
+            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/${{ inputs.tag || github.ref_name }}/CHANGELOG.md) for release notes.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

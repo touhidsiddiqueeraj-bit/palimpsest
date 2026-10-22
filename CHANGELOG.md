@@ -53,6 +53,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CI/Release: the Intel-Mac release build failed with `Target
+x86_64-apple-darwin is not installed` — GitHub's ARM macOS runners only
+  preinstall `aarch64-apple-darwin`, so the workflow now runs
+  `rustup target add x86_64-apple-darwin` for that matrix entry. The Release
+  workflow is also dispatchable with an explicit tag (`workflow_dispatch`),
+  so an incomplete release like `v0.2` can be re-finished without re-tagging.
+- Desktop: `htmlToMarkdown` (HTML import) was rewritten as a tree-walking
+  converter — the old regex soup imported the app's own exported documents
+  with the print CSS and `<title>` text glued into the document, merged
+  nested-list items into one item, collapsed fenced code blocks into
+  single-backtick runs, fused table cells together, and dropped task
+  checkboxes, callout kinds and footnote refs/definitions. Export → import
+  now round-trips the renderer's own output (21 unit tests, including AST
+  equality against the source markdown).
+- Desktop: macOS "Open with…" now works — Finder file-open events arrive as
+  `RunEvent::Opened` (Apple Event), not argv, so the app previously ignored
+  them; the opened file is stashed at startup for the frontend's
+  `initial_open` query (with percent-decoding of `file://` URLs).
+- Desktop: the bundle identifier `dev.palimpsest.app` ended with `.app`,
+  which conflicts with the macOS application-bundle extension (Tauri warned
+  on every build); renamed to `dev.palimpsest.desktop`.
 - Desktop: first-launch/double-click boot bug — the open handler closed over
   a pre-boot (null) store and silently skipped reconcile, leaving the opened
   document without its snapshot history. The handler now reads the store via
