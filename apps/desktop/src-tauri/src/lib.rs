@@ -48,18 +48,36 @@ fn open_md_file(app: &AppHandle, path: PathBuf) -> Option<(String, String)> {
     ))
 }
 
+/** First run (no `workspace.txt`): default to a demo workspace under the app
+ * data dir. The frontend used to construct this path itself, which bypassed
+ * `scope_workspace` — and none of the static fs-scope globs can match the
+ * bare `.palimpsest` directory (`dir/**` skips dot-segments; a trailing `**`
+ * never matches the directory itself) — so a fresh install of a packaged
+ * build died on `mkdir` with "forbidden path: …/palimpsest-demo/.palimpsest".
+ * Seeding it here keeps every workspace on the same code path. */
+fn default_workspace(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = base.join("palimpsest-demo");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    scope_workspace(app, &dir).map_err(|e| e.to_string())?;
+    persist_workspace(app, &dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
 #[tauri::command]
 fn get_workspace(app: AppHandle) -> Result<Option<String>, String> {
-    let Some(f) = workspace_file(&app) else {
-        return Ok(None);
-    };
-    match fs::read_to_string(&f) {
-        Ok(p) if !p.trim().is_empty() => {
-            scope_workspace(&app, PathBuf::from(p.trim()).as_path()).map_err(|e| e.to_string())?;
-            Ok(Some(p.trim().to_string()))
+    if let Some(f) = workspace_file(&app) {
+        if let Ok(p) = fs::read_to_string(&f) {
+            let p = p.trim();
+            if !p.is_empty() {
+                scope_workspace(&app, PathBuf::from(p).as_path()).map_err(|e| e.to_string())?;
+                return Ok(Some(p.to_string()));
+            }
         }
-        _ => Ok(None),
     }
+    // First run: seed the default demo workspace — created, scoped, and
+    // persisted exactly like a picked folder.
+    default_workspace(&app).map(|dir| Some(dir.to_string_lossy().to_string()))
 }
 
 #[tauri::command]

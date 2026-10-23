@@ -20,8 +20,10 @@
     {
       "identifier": "fs:scope",
       "allow": [
-        { "path": "$APPDATA/**" },
+        { "path": "$APPDATA/palimpsest-demo" },
+        { "path": "$APPDATA/palimpsest-demo/.palimpsest" },
         { "path": "$APPDATA/palimpsest-demo/.palimpsest/**" },
+        { "path": "$APPDATA/**" },
         { "path": "$APPCONFIG/**" }
       ]
     },

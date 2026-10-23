@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Desktop: a fresh install of a packaged build (AppImage/dmg/msi) died on
+  boot with `Backend unavailable … forbidden path: …/.palimpsest`. The
+  default demo workspace was assembled by the frontend and never
+  runtime-scoped, and none of the static fs-scope globs can match the bare
+  `.palimpsest` directory (`dir/**` skips dot-segments; a trailing `**`
+  never matches the directory itself). The backend now seeds the default
+  workspace on first run — created, scoped, and persisted like a picked
+  folder — and the static scope lists both directories explicitly.
 - CI/Release: the Intel-Mac release build failed with `Target
 x86_64-apple-darwin is not installed` — GitHub's ARM macOS runners only
   preinstall `aarch64-apple-darwin`, so the workflow now runs

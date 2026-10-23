@@ -1,6 +1,6 @@
 [package]
 name = "palimpsest"
-version = "0.1.0"
+version = "0.2.1"
 description = "The Markdown editor with a memory"
 authors = ["Palimpsest contributors"]
 edition = "2021"
