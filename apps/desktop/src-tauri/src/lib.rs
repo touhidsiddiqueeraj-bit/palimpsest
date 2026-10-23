@@ -50,11 +50,11 @@ fn open_md_file(app: &AppHandle, path: PathBuf) -> Option<(String, String)> {
 
 /** First run (no `workspace.txt`): default to a demo workspace under the app
  * data dir. The frontend used to construct this path itself, which bypassed
- * `scope_workspace` — and none of the static fs-scope globs can match the
- * bare `.palimpsest` directory (`dir/**` skips dot-segments; a trailing `**`
- * never matches the directory itself) — so a fresh install of a packaged
- * build died on `mkdir` with "forbidden path: …/palimpsest-demo/.palimpsest".
- * Seeding it here keeps every workspace on the same code path. */
+ * `scope_workspace` — and no static fs-scope glob can match the bare
+ * `.palimpsest` directory (recursive globs skip dot-segments, and a trailing
+ * double-star never matches the directory itself) — so a fresh install of a
+ * packaged build died on `mkdir` with "forbidden path". Seeding the default
+ * here keeps every workspace on the same code path. */
 fn default_workspace(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let dir = base.join("palimpsest-demo");
